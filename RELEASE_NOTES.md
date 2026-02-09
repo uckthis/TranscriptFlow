@@ -1,21 +1,21 @@
-# TranscriptFlow Pro v1.0.7 - Official Release
+# TranscriptFlow Pro v1.0.9 - Urdu & RTL Edition
 
-Welcome to the first official release of **TranscriptFlow Pro**! This version represents a stable, performance-optimized build ready for professional transcription workflows.
+This major update introduces professional **Right-to-Left (RTL)** support with specialized features for **Urdu** transcription, along with robust BiDi cursor management and font bundling.
 
-## 🚀 Key Features
-- **Dual Media Engine**: Switch seamlessly between **MPV** (frame-accurate) and **VLC** backends.
-- **Dynamic Waveform**: Real-time interactive waveform generation for precise seeking.
-- **Pivot Sync**: High-fidelity synchronization between transcript text and media timecodes.
-- **Branded Experience**: Featuring a professional splash screen and modern UI layouts.
-- **Zero-Noise Installer**: Silent installation that defaults to Program Files for a clean system footprint.
+## 🌙 Professional Urdu Support
+- **Auto-Font Switching**: Detects your Urdu keyboard and instantly switches the editor to the premium **'Jameel Noori Nastaleeq'** font.
+- **BiDi Cursor Perfection**: Resolved the "cursor jumping" issue. The editor now uses advanced block-level alignment forcing to ensure the cursor stays on the right and moves correctly for RTL text.
+- **Reversible Experience**: Switching back to English instantly restores your preferred standard font (e.g., Tahoma) and alignment without polluting your permanent settings.
+- **Bundled Typography**: The 'Jameel Noori Nastaleeq' font is now bundled and registered automatically—no manual installation required.
 
-## 🛠️ Enhancements in v1.0.7
-- **Editor Focus Lock**: Clicking Rewind/Fast Forward or Ribbon buttons no longer steals focus from the editor. Type without interruptions!
-- **Robust MPV Discovery**: Fixed an issue where the MPV engine could not be re-selected after a dynamic switch in the installed environment.
-- **Updated Documentation**: Integrated comprehensive help documentation (F1).
+## 🛠️ Enhancements & Fixes
+- **Manual RTL UI**: Menus and toolbars now only flip when you want them to (via **View > RTL Mode**), giving you full control over the application layout.
+- **Alignment Persistence**: Pressing Enter now correctly maintains Right-Alignment for new blocks when in RTL or Urdu mode.
+- **Font Reset Mitigation**: Improved logic to prevent the editor from resetting to Tahoma when inserting timecodes or snippets.
+- **Startup Intelligence**: The app now checks your current keyboard at launch to set the correct font and alignment before you type.
 
 ## 📥 Installation
-Download `TranscriptFlow_Setup_1.0.7.exe` below and run it. The application will be installed to your Program Files directory.
+Download `TranscriptFlow_Setup_1.0.9.exe` below and run it. 
 
 ---
-**Note**: If you are using the MPV engine for the first time, ensure you have libmpv (mpv-1.dll) in the application directory or system path.
+**Tip**: If the editor font seems stuck, simply select your preferred English font in the ribbon once while using an English keyboard. The app will remember that as your default while still auto-switching to Urdu when needed!

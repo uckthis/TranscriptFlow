@@ -7,8 +7,8 @@ VSVersionInfo(
   ffi=FixedFileInfo(
     # filevers and prodvers should be always a tuple with four items: (1, 2, 3, 4)
     # Set not needed items to zero 0.
-    filevers=(1, 0, 8, 0),
-    prodvers=(1, 0, 8, 0),
+    filevers=(1, 0, 9, 0),
+    prodvers=(1, 0, 9, 0),
     # Contains a bitmask that specifies the valid bits 'flags'r
     mask=0x3f,
     # Contains a bitmask that specifies the Boolean attributes of the file.
@@ -32,12 +32,12 @@ VSVersionInfo(
         u'040904B0',
         [StringStruct(u'CompanyName', u'TranscriptFlow'),
         StringStruct(u'FileDescription', u'TranscriptFlow - Professional Transcription Software'),
-        StringStruct(u'FileVersion', u'1.0.8.0'),
+        StringStruct(u'FileVersion', u'1.0.9.0'),
         StringStruct(u'InternalName', u'TranscriptFlow'),
         StringStruct(u'LegalCopyright', u'Copyright (C) 2026 TranscriptFlow'),
         StringStruct(u'OriginalFilename', u'TranscriptFlow.exe'),
         StringStruct(u'ProductName', u'TranscriptFlow Pro'),
-        StringStruct(u'ProductVersion', u'1.0.8.0')])
+        StringStruct(u'ProductVersion', u'1.0.9.0')])
       ]), 
     VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
   ]
