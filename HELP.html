@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TranscriptFlow Pro - User Documentation</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --text: #1e293b;
+            --card-bg: #ffffff;
+            --accent: #3b82f6;
+            --border: #e2e8f0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+
+        header {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 2rem auto;
+            padding: 0 1.5rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border: 1px solid var(--border);
+        }
+
+        h1, h2, h3 { color: var(--text); }
+        h1 { margin: 0; font-size: 2.5rem; }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            background-color: var(--primary);
+            color: white;
+            margin-bottom: 1rem;
+        }
+
+        code {
+            background-color: #f1f5f9;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            font-weight: 600;
+        }
+
+        .shortcut-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        .shortcut-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            color: #64748b;
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="badge">Version 1.0.0</div>
+    <h1>TranscriptFlow Pro</h1>
+    <p>Professional Media Transcription & Data Management</p>
+</header>
+
+<div class="container">
+    <section class="card">
+        <h2>🚀 Quick Start</h2>
+        <ol>
+            <li><b>Load Media:</b> Go to <code>File > New Document with Media...</code> or drag a video file directly into the player.</li>
+            <li><b>Playback:</b> Use the <code>Tab</code> key to toggle play/pause. Use <code>Ctrl + Left/Right</code> to skip through time.</li>
+            <li><b>Transcription:</b> Type in the editor. Use <code>Ctrl + ;</code> to insert a timestamp at the current playback position.</li>
+            <li><b>Snapshots:</b> Use <code>Ctrl + 1-5</code> to quickly insert speaker names and timestamps (Snippets).</li>
+        </ol>
+    </section>
+
+    <section class="card">
+        <h2>⌨️ Essential Shortcuts</h2>
+        <div class="shortcut-grid">
+            <div class="shortcut-item"><span>Toggle Play/Pause</span> <code>Tab</code></div>
+            <div class="shortcut-item"><span>Insert Timestamp</span> <code>Ctrl + ;</code></div>
+            <div class="shortcut-item"><span>Skip Back (2s)</span> <code>Ctrl + Left</code></div>
+            <div class="shortcut-item"><span>Skip Forward (5s)</span> <code>Ctrl + Right</code></div>
+            <div class="shortcut-item"><span>Frame Forward</span> <code>Alt + Right</code></div>
+            <div class="shortcut-item"><span>Increase Volume</span> <code>Ctrl + Shift + Up</code></div>
+            <div class="shortcut-item"><span>Decrease Speed</span> <code>Ctrl + Down</code></div>
+            <div class="shortcut-item"><span>Sync Transcript</span> <code>Ctrl + K</code></div>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>⏱️ Timecode Sync & Shifting</h2>
+        <p>If you've started transcribing before realizing your media offset is wrong, you can fix it easily:</p>
+        <ul>
+            <li><b>Transcript > Adjust Timecodes:</b> Shift all timecodes in the document by a fixed amount (e.g., +1 second).</li>
+            <li><b>Transcript > Sync with Current Time:</b> Align the transcript to the current video playback position. This is ideal if you're resuming work or handling multiple clips.</li>
+        </ul>
+    </section>
+
+    <section class="card">
+        <h2>📋 Snippet Variables</h2>
+        <p>Customize your snippets in <code>Edit > Edit Snippets</code> using these variables:</p>
+        <ul>
+            <li><code>{$time}</code> - Inserts the current media timecode.</li>
+            <li><code>{$media_name}</code> - Inserts the filename of the loaded media.</li>
+            <li><code>{$media_path}</code> - Inserts the full path of the media file.</li>
+            <li><code>{$time_offset(+00:00:01:00)}</code> - Inserts a timecode with a specific offset.</li>
+        </ul>
+    </section>
+</div>
+
+<div class="footer">
+    &copy; 2026 TranscriptFlow. Built for Precision.
+</div>
+
+</body>
+</html>

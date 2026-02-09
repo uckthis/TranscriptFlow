@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.mypy_cache/
+.pytest_cache/
+
+# PyInstaller & Build Artifacts
+build/
+dist/
+*.spec
+!TranscriptFlow.spec
+
+# Inno Setup
+installer_output/
+
+# App Specific Cache & Data
+waveform_cache/
+BACKUP/
+custom_dicts/
+logs/
+*.npy
+
+# Binaries (Usually better to download or bundle in release)
+mpv-1.dll
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local Config (Keep as template if needed, but ignore local changes)
+config.json

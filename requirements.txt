@@ -1,0 +1,8 @@
+PyQt6
+python-vlc
+ffmpeg-python
+numpy
+yt-dlp
+openai
+pynput
+pyenchant
