@@ -78,6 +78,7 @@ class TranscriptEditor(QTextEdit):
     seekRequested = pyqtSignal(int)
     commandTriggered = pyqtSignal(dict) # Sends the shortcut dict to Main
     snippetTriggered = pyqtSignal(dict) # Sends the snippet dict to Main
+    settingsChanged = pyqtSignal(dict) # Notifies Main of style changes (font, size, etc.)
 
     def __init__(self, shortcuts_list, snippets_list, settings):
         super().__init__()
@@ -86,6 +87,7 @@ class TranscriptEditor(QTextEdit):
         self.snippets = snippets_list
         self.settings = settings
         self.setMouseTracking(True)
+        self.temporary_font_override = None # For Urdu auto-switching
         self.update_font()
         
         # Spell Checker Integration
@@ -125,8 +127,13 @@ class TranscriptEditor(QTextEdit):
 
         # 2. Reset format on ENTER (Reset on Enter feature)
         if key in [Qt.Key.Key_Return, Qt.Key.Key_Enter]:
+            # Remember alignment before enter
+            is_right_aligned = self.alignment() == Qt.AlignmentFlag.AlignRight or self.layoutDirection() == Qt.LayoutDirection.RightToLeft
             super().keyPressEvent(event)
             self.setCurrentCharFormat(self.get_default_format())
+            # Maintain alignment for the new block
+            if is_right_aligned:
+                self.setAlignment(Qt.AlignmentFlag.AlignRight)
             return
 
         # 3. Build Shortcut String (e.g. "Ctrl+Shift+P")
@@ -157,6 +164,16 @@ class TranscriptEditor(QTextEdit):
 
         # 6. Default Typing
         super().keyPressEvent(event)
+        
+        # 7. Force block alignment for RTL to prevent BiDi cursor jumping
+        # Qt's BiDi algorithm tries to be "smart" and moves RTL text to the left
+        # We need to explicitly force the alignment after each keystroke
+        if self.layoutDirection() == Qt.LayoutDirection.RightToLeft:
+            cursor = self.textCursor()
+            block_format = cursor.blockFormat()
+            if block_format.alignment() != Qt.AlignmentFlag.AlignRight:
+                block_format.setAlignment(Qt.AlignmentFlag.AlignRight)
+                cursor.setBlockFormat(block_format)
 
     def matches_trigger(self, pressed, trigger):
         """Normalize and compare keys"""
@@ -395,25 +412,38 @@ class TranscriptEditor(QTextEdit):
         self.mergeCurrentCharFormat(fmt)
 
     def set_text_color(self, color):
+        self.settings['font_color'] = color
         fmt = self.currentCharFormat()
         fmt.setForeground(QColor(color))
         self.setCurrentCharFormat(fmt)
+        self.settingsChanged.emit(self.settings)
 
     def set_font_family(self, font_name):
+        self.settings['font'] = font_name
         fmt = self.currentCharFormat()
         fmt.setFontFamilies([font_name])
         self.setCurrentCharFormat(fmt)
+        self.settingsChanged.emit(self.settings)
 
     def set_font_size(self, size):
+        self.settings['size'] = int(size)
         fmt = self.currentCharFormat()
         fmt.setFontPointSize(float(size))
         self.setCurrentCharFormat(fmt)
+        self.settingsChanged.emit(self.settings)
+
+    def set_temporary_font_override(self, font_name):
+        """Sets a font override without updating permanent settings (for auto-Urdu)"""
+        self.temporary_font_override = font_name
+        # Apply immediately to current typing
+        self.setCurrentCharFormat(self.get_default_format())
 
     def get_default_format(self):
-        """Returns a character format based on current settings"""
+        """Returns a character format based on current settings or temporary override"""
         from PyQt6.QtGui import QTextCharFormat
         fmt = QTextCharFormat()
-        font_name = self.settings.get('font', 'Tahoma')
+        # Use override if present (for Urdu), otherwise config setting
+        font_name = self.temporary_font_override if self.temporary_font_override else self.settings.get('font', 'Tahoma')
         font_size = self.settings.get('size', 14)
         fmt.setFont(QFont(font_name, font_size))
         fmt.setForeground(QColor(self.settings.get('font_color', 'black')))

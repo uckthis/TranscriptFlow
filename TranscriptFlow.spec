@@ -62,6 +62,7 @@ datas = [
     # Documentation
     ('HELP.html', '.'),
     ('splash.png', '.'),
+    ('Jameel Noori Nastaleeq.ttf', '.'),
 ]
 
 # Add enchant data files

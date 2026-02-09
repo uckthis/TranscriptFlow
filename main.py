@@ -92,9 +92,10 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QInputDialog, QTextBrowser, QDialog, QProgressDialog,
                              QToolBar, QColorDialog, QFontComboBox, QComboBox, QGridLayout, QSizePolicy, QMenu,
                              QSplashScreen)
-from PyQt6.QtCore import Qt, QUrl, QTimer, QCoreApplication, QByteArray, QRegularExpression
+from PyQt6.QtCore import Qt, QUrl, QTimer, QCoreApplication, QByteArray, QRegularExpression, QLocale
 from PyQt6.QtGui import (QAction, QIcon, QKeySequence, QActionGroup, QFont, QColor, 
-                         QTextCharFormat, QFontDatabase, QTextCursor, QPixmap, QPainter, QLinearGradient, QBrush)
+                         QTextCharFormat, QFontDatabase, QTextCursor, QPixmap, QPainter, QLinearGradient, QBrush,
+                         QDesktopServices, QPen, QGuiApplication, QTextOption)
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog, QPageSetupDialog
 
 # Set Application User Model ID for Windows Taskbar Icon stability
@@ -116,9 +117,26 @@ import hardware
 from utils import Exporter, TimecodeHelper, SettingsManager, FileManager, BackupManager, TranscriptParser
 
 class ClickableSlider(QSlider):
-    def __init__(self, orientation, parent=None):
+    def __init__(self, orientation, parent=None, overlay_text=""):
         super().__init__(orientation, parent)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.overlay_text = overlay_text
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.overlay_text:
+            painter = QPainter(self)
+            # Use semi-transparent white/gray for a subtle look
+            painter.setPen(QPen(QColor(255, 255, 255, 100))) 
+            font = painter.font()
+            font.setPointSize(8)
+            font.setBold(True)
+            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+            painter.setFont(font)
+            
+            # Draw centered text
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.overlay_text)
+            painter.end()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -243,6 +261,7 @@ class MainWindow(QMainWindow):
         self.show_waveform = self.config['ui']['show_waveform']
         self.dark_mode = self.config['ui'].get('dark_mode', False)
         self.current_theme = self.config['ui'].get('theme', 'Light')
+        self.rtl_mode = self.config['ui'].get('rtl_mode', False)
         
         # Playback settings
         self.playback_config = self.config.get('playback', {
@@ -283,6 +302,20 @@ class MainWindow(QMainWindow):
         self.last_seek_time = 0
         self.setAcceptDrops(True)
         
+        # --- Register Urdu Font (Jameel Noori Nastaleeq) ---
+        font_path = get_resource_path("Jameel Noori Nastaleeq.ttf")
+        self.urdu_font_family = "Jameel Noori Nastaleeq" # Fallback
+        if os.path.exists(font_path):
+            f_id = QFontDatabase.addApplicationFont(font_path)
+            if f_id != -1:
+                families = QFontDatabase.applicationFontFamilies(f_id)
+                if families:
+                    self.urdu_font_family = families[0]
+                    logger.info(f"Custom font '{self.urdu_font_family}' registered successfully.")
+
+        # --- Monitor Input Language ---
+        QApplication.inputMethod().localeChanged.connect(self.on_locale_changed)
+        
         self.is_dirty = False
         self.editor.textChanged.connect(self._mark_as_dirty)
 
@@ -302,7 +335,11 @@ class MainWindow(QMainWindow):
         self.backup_timer.timeout.connect(self.perform_auto_backup)
         self.backup_timer.start(1000) # Check every second for precision
 
+        # Initial RTL sync
         self.is_initializing = False
+        
+        # Initial locale sync (triggers correct font/alignment for current keyboard)
+        self.on_locale_changed()
         
         # Application-wide shortcuts (Primary: Playback toggle)
         self.setup_global_shortcuts()
@@ -389,12 +426,22 @@ class MainWindow(QMainWindow):
         btn_styles = "QPushButton { border-radius: 18px; min-width: 40px; min-height: 40px; font-size: 14px; font-weight: bold; }"
         
         self.btn_start = QPushButton("⏮"); self.btn_start.setStyleSheet(btn_styles); self.btn_start.clicked.connect(self.go_to_start)
+        self.btn_start.setToolTip("Go to Start")
+        
         self.btn_back5 = QPushButton("⏪ 5s"); self.btn_back5.setStyleSheet(btn_styles); self.btn_back5.clicked.connect(self.skip_back)
+        self.btn_back5.setToolTip("Rewind 5 Seconds")
+        
         self.btn_play = QPushButton("▶"); self.btn_play.setStyleSheet(btn_styles); self.btn_play.clicked.connect(self.toggle_play)
         self.btn_play.setObjectName("PlayPauseButton")
+        
         self.btn_fwd5 = QPushButton("5s ⏩"); self.btn_fwd5.setStyleSheet(btn_styles); self.btn_fwd5.clicked.connect(self.skip_forward)
+        self.btn_fwd5.setToolTip("Fast Forward 5 Seconds")
+        
         self.btn_end = QPushButton("⏭"); self.btn_end.setStyleSheet(btn_styles); self.btn_end.clicked.connect(self.go_to_end)
+        self.btn_end.setToolTip("Go to End")
+        
         self.btn_ins_tc = QPushButton("🕒"); self.btn_ins_tc.setStyleSheet(btn_styles); self.btn_ins_tc.clicked.connect(self.insert_current_time)
+        self.btn_ins_tc.setToolTip("Insert Current Timecode (Ctrl+;)")
         
         # Prevent focus loss when clicking playback buttons
         for btn in [self.btn_start, self.btn_back5, self.btn_play, self.btn_fwd5, self.btn_end, self.btn_ins_tc]:
@@ -406,9 +453,9 @@ class MainWindow(QMainWindow):
         
         # Speed/Vol
         self.sliders_container = QWidget(); sliders_layout = QVBoxLayout(self.sliders_container)
-        self.sl_rate = ClickableSlider(Qt.Orientation.Horizontal); self.sl_rate.setRange(25, 300); self.sl_rate.setValue(100); self.sl_rate.valueChanged.connect(self.on_speed_changed)
+        self.sl_rate = ClickableSlider(Qt.Orientation.Horizontal, overlay_text="SPEED"); self.sl_rate.setRange(25, 300); self.sl_rate.setValue(100); self.sl_rate.valueChanged.connect(self.on_speed_changed)
         self.speed_label = QLabel("1.0x"); sliders_layout.addWidget(self.sl_rate); sliders_layout.addWidget(self.speed_label)
-        self.sl_vol = ClickableSlider(Qt.Orientation.Horizontal); self.sl_vol.setRange(0, 100); self.sl_vol.setValue(100); self.sl_vol.valueChanged.connect(self.on_volume_changed)
+        self.sl_vol = ClickableSlider(Qt.Orientation.Horizontal, overlay_text="VOLUME"); self.sl_vol.setRange(0, 100); self.sl_vol.setValue(100); self.sl_vol.valueChanged.connect(self.on_volume_changed)
         self.volume_label = QLabel("100%"); sliders_layout.addWidget(self.sl_vol); sliders_layout.addWidget(self.volume_label)
         self.controls_layout.addWidget(self.sliders_container)
         
@@ -423,6 +470,7 @@ class MainWindow(QMainWindow):
         self.editor.seekRequested.connect(self.engine.seek)
         self.editor.commandTriggered.connect(self.handle_command)
         self.editor.snippetTriggered.connect(self.handle_snippet)
+        self.editor.settingsChanged.connect(self.handle_editor_settings_change)
         self.right_layout.addWidget(self.editor)
         
         self.main_splitter.addWidget(self.left_panel); self.main_splitter.addWidget(self.right_panel)
@@ -1722,6 +1770,14 @@ class MainWindow(QMainWindow):
         self.update_theme_menu()
         
         view_menu.addSeparator()
+        
+        self.rtl_act = QAction("Right-to-Left (RTL) Mode", self)
+        self.rtl_act.setCheckable(True)
+        self.rtl_act.setChecked(self.rtl_mode)
+        self.rtl_act.triggered.connect(self.toggle_rtl)
+        view_menu.addAction(self.rtl_act)
+        
+        view_menu.addSeparator()
 
         # ==================== MEDIA MENU ====================
         media_menu = menu.addMenu("&Media")
@@ -1875,6 +1931,12 @@ class MainWindow(QMainWindow):
         """Helper to route button clicks to handle_command logic"""
         self.handle_command({'command': cmd, 'skip': 5.0, 'value': 0.1})
 
+
+    def handle_editor_settings_change(self, updated_settings):
+        """Persists on-the-fly style changes (font, size, color) to the config"""
+        if self.is_initializing: return
+        self.config['settings'].update(updated_settings)
+        self.save_config()
 
     def handle_command(self, cmd_dict):
         """Dispatches commands received from Editor shortcuts"""
@@ -2879,6 +2941,94 @@ class MainWindow(QMainWindow):
             
         self.save_config()
 
+    def on_locale_changed(self):
+        """Automatically switch fonts and alignment when switching to Urdu keyboard"""
+        if self.is_initializing: return
+        
+        locale = QApplication.inputMethod().locale()
+        
+        if locale.language() == QLocale.Language.Urdu:
+            # 1. Switch to Urdu-specific font visually (Temporary override)
+            urdu_font = self.urdu_font_family
+            self.editor.set_temporary_font_override(urdu_font)
+            
+            # Update Ribbon UI to reflect current visual font
+            self.font_combo.blockSignals(True)
+            self.font_combo.setCurrentFont(QFont(urdu_font))
+            self.font_combo.blockSignals(False)
+            
+            # 2. Force RTL for Editor specifically (BiDi cursor support)
+            self.editor.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+            self.editor.setAlignment(Qt.AlignmentFlag.AlignRight)
+            
+            # Force current block to right alignment (prevents BiDi cursor jumping)
+            cursor = self.editor.textCursor()
+            block_format = cursor.blockFormat()
+            block_format.setAlignment(Qt.AlignmentFlag.AlignRight)
+            cursor.setBlockFormat(block_format)
+            
+            # 3. Ensure future blocks default to right
+            text_option = self.editor.document().defaultTextOption()
+            text_option.setAlignment(Qt.AlignmentFlag.AlignRight)
+            self.editor.document().setDefaultTextOption(text_option)
+            
+            self.statusBar().showMessage(f"Urdu Keyboard Detected: Using {urdu_font}.", 4000)
+        else:
+            # 1. Clear temporary override and revert to standard font
+            self.editor.set_temporary_font_override(None)
+            standard_font = self.config['settings'].get('font', 'Tahoma')
+            
+            self.font_combo.blockSignals(True)
+            self.font_combo.setCurrentFont(QFont(standard_font))
+            self.font_combo.blockSignals(False)
+            
+            # 2. Synchronize with manual RTL toggle or default to LTR
+            direction = Qt.LayoutDirection.RightToLeft if self.rtl_mode else Qt.LayoutDirection.LeftToRight
+            alignment = Qt.AlignmentFlag.AlignRight if self.rtl_mode else Qt.AlignmentFlag.AlignLeft
+            
+            # Only flip global UI if it matches the manual toggle (don't flip for Urdu keyboard only)
+            QApplication.setLayoutDirection(direction)
+            self.editor.setLayoutDirection(direction)
+            self.editor.setAlignment(alignment)
+            
+            text_option = self.editor.document().defaultTextOption()
+            text_option.setAlignment(alignment)
+            self.editor.document().setDefaultTextOption(text_option)
+
+    def toggle_rtl(self):
+        """Toggles the global application and editor layout direction for RTL languages"""
+        self.rtl_mode = self.rtl_act.isChecked()
+        
+        direction = Qt.LayoutDirection.RightToLeft if self.rtl_mode else Qt.LayoutDirection.LeftToRight
+        alignment = Qt.AlignmentFlag.AlignRight if self.rtl_mode else Qt.AlignmentFlag.AlignLeft
+        
+        # 1. Flip Global UI
+        QApplication.setLayoutDirection(direction)
+        
+        # 2. Flip Editor specifically and force immediate alignment
+        self.editor.setLayoutDirection(direction)
+        self.editor.setAlignment(alignment)
+        
+        # 3. Force document-level alignment for all new blocks
+        text_option = self.editor.document().defaultTextOption()
+        text_option.setAlignment(alignment)
+        self.editor.document().setDefaultTextOption(text_option)
+        
+        # 4. Handle Urdu specifically if enabled
+        if self.rtl_mode:
+            # If switching TO RTL, and we have Urdu keyboard, ensure font is ready
+            locale = QApplication.inputMethod().locale()
+            if locale.language() == QLocale.Language.Urdu:
+                self.on_locale_changed()
+        
+        # 5. Update Status Bar
+        msg = "RTL Mode Enabled (Right-Aligned)" if self.rtl_mode else "RTL Mode Disabled (Left-Aligned)"
+        self.statusBar().showMessage(msg, 3000)
+        
+        # 6. Save to config
+        self.config['ui']['rtl_mode'] = self.rtl_mode
+        self.save_config()
+
 
     def display_tracks(self):
         from PyQt6.QtWidgets import QMenu
@@ -3285,16 +3435,15 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def check_updates(self):
-        QMessageBox.information(
-            self, "Check for Updates", 
-            "You are using the latest version.\n\nTranscriptFlow Pro v1.0"
-        )
+        """Opens the GitHub releases page to check for the latest version"""
+        url = "https://github.com/uckthis/TranscriptFlow/releases/latest"
+        QDesktopServices.openUrl(QUrl(url))
 
     def show_about(self):
         QMessageBox.about(
             self, "About TranscriptFlow Pro",
             "<h2>TranscriptFlow Pro</h2>"
-            "<p>Version 1.0.7</p>"
+            "<p>Version 1.0.8</p>"
             "<p>A professional transcription application.</p>"
             "<p><b>Features:</b></p>"
             "<ul>"
@@ -3305,7 +3454,9 @@ class MainWindow(QMainWindow):
             "<li>VLC-powered media playback</li>"
             "<li>Dark and light themes</li>"
             "</ul>"
-            "<p><i>Built with PyQt6 and python-vlc</i></p>"
+            "<p>Visit our GitHub for updates and community support:</p>"
+            "<p><a href='https://github.com/uckthis/TranscriptFlow'>https://github.com/uckthis/TranscriptFlow</a></p>"
+            "<p><i>Built with PyQt6, libmpv, and libvlc</i></p>"
         )
 
     def find_text(self):

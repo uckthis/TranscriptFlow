@@ -3,7 +3,7 @@
 ; Supports both x86 and x64 architectures with automatic detection
 
 #define MyAppName "TranscriptFlow Pro"
-#define MyAppVersion "1.0.7"
+#define MyAppVersion "1.0.8"
 #define MyAppPublisher "TranscriptFlow"
 #define MyAppURL "https://transcriptflow.com"
 #define MyAppExeName "TranscriptFlow.exe"
@@ -69,6 +69,7 @@ Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescrip
 Source: "dist\TranscriptFlow\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "HELP.html"; DestDir: "{app}"; Flags: ignoreversion
 Source: "splash.png"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Jameel Noori Nastaleeq.ttf"; DestDir: "{app}"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]
