@@ -66,7 +66,7 @@ This will:
 
 ## License
 
-[Add your license information here, e.g., MIT License]
+The Apache License 2.0
 
 ## Acknowledgments
 
