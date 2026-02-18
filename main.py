@@ -188,7 +188,9 @@ class MainWindow(QMainWindow):
                 'recognize_unbracketed': True,
                 'timecode_new_line': True,
                 'spell_check': True,
-                'spell_check_lang': 'en_GB'
+                'spell_check_lang': 'en_GB',
+                'autosave_enabled': False,
+                'autosave_interval': 5,
             },
             'backup_interval': 1,
             'default_window_size': [1024, 800],
@@ -317,11 +319,16 @@ class MainWindow(QMainWindow):
         QApplication.inputMethod().localeChanged.connect(self.on_locale_changed)
         
         self.is_dirty = False
-        self.editor.textChanged.connect(self._mark_as_dirty)
+        self.editor.textChanged.connect(self._on_text_changed_internal)
 
         # --- Backup System ---
         self.backup_manager = BackupManager(self.sm)
-        self.last_backup_time = datetime.datetime.now()
+        # Initialize to a past date to allow immediate backup on FIRST change
+        self.last_backup_time = datetime.datetime.now() - datetime.timedelta(days=1)
+        self.last_autosave_time = datetime.datetime.now()
+        self.last_typed_time = datetime.datetime.now()
+        self.media_just_loaded = False
+        self.is_backup_dirty = False
         
         # hardware
         self.pedal_manager = hardware.FootPedalManager(self.config)
@@ -351,6 +358,12 @@ class MainWindow(QMainWindow):
         self.tab_act.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.tab_act.triggered.connect(self.toggle_play)
         self.addAction(self.tab_act)
+
+    def _on_text_changed_internal(self):
+        """Central handler for all text changes to track dirty state and backup timing"""
+        self.is_backup_dirty = True
+        self.last_typed_time = datetime.datetime.now()
+        self._mark_as_dirty()
 
     def _mark_as_dirty(self):
         self.is_dirty = True
@@ -467,6 +480,7 @@ class MainWindow(QMainWindow):
         # The 1st value (10) below is the left margin (editor side of the gap)
         self.right_layout.setContentsMargins(10,0,10,10) 
         self.editor = TranscriptEditor(self.shortcuts, self.snippets, self.settings)
+        # Note: Connection is handled in __init__ after init_ui
         self.editor.seekRequested.connect(self.engine.seek)
         self.editor.commandTriggered.connect(self.handle_command)
         self.editor.snippetTriggered.connect(self.handle_snippet)
@@ -1685,6 +1699,8 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.spell_act)
         edit_menu.addSeparator()
         
+        self.add_action_safe(edit_menu, "Options...", self.open_options)
+        
         self.add_action_safe(edit_menu, "Edit Shortcuts...", self.open_shortcuts_dialog)
         self.add_action_safe(edit_menu, "Edit Snippets...", self.open_snippets_dialog)
         edit_menu.addSeparator()
@@ -2146,6 +2162,7 @@ class MainWindow(QMainWindow):
             self.engine.set_display_handle(win_id)
             self.engine.load_source('file', path)
             self.show_toast(f"Loaded: {os.path.basename(path)}")
+            self.media_just_loaded = True
             logger.info(f"Successfully called engine.load_source for {path}")
         except Exception as e:
             logger.exception(f"Error during media engine loading: {e}")
@@ -2469,6 +2486,7 @@ class MainWindow(QMainWindow):
                 if FileManager.save_tflow(self.current_file_path, data):
                     self.statusBar().showMessage(f"Saved: {self.current_file_path}", 2000)
                     self.is_dirty = False
+                    self.is_backup_dirty = False
                     self.editor.document().setModified(False)
                     self.update_recent_files(self.current_file_path)
             else:
@@ -2476,6 +2494,7 @@ class MainWindow(QMainWindow):
                     f.write(self.editor.toHtml())
                 self.statusBar().showMessage(f"Saved: {self.current_file_path}", 2000)
                 self.is_dirty = False
+                self.is_backup_dirty = False
                 self.editor.document().setModified(False)
         else:
             self.save_as_doc()
@@ -2483,9 +2502,20 @@ class MainWindow(QMainWindow):
     def save_as_doc(self):
         import datetime
         last_dir = self.config.get('last_export_dir', os.path.expanduser("~"))
+        
+        # Priority: If media just loaded and we haven't saved since, use media dir
+        if self.media_just_loaded and hasattr(self, 'current_media_path') and self.current_media_path:
+            media_dir = os.path.dirname(self.current_media_path)
+            if os.path.exists(media_dir):
+                last_dir = media_dir
+        
         # Generate default filename
         if self.current_file_path:
             default_name = os.path.basename(self.current_file_path)
+        elif hasattr(self, 'current_media_path') and self.current_media_path:
+            # Suggest name based on media
+            media_base = os.path.splitext(os.path.basename(self.current_media_path))[0]
+            default_name = f"{media_base}.tflow"
         else:
             default_name = f"transcript_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tflow"
         
@@ -2495,6 +2525,7 @@ class MainWindow(QMainWindow):
         )
         if f:
             self.config['last_export_dir'] = os.path.dirname(f)
+            self.media_just_loaded = False # Reset once we have a manual save
             self.save_config()
             self.current_file_path = f
             self.save_doc()
@@ -2779,6 +2810,9 @@ class MainWindow(QMainWindow):
             
             # Pitch Lock
             self.engine.set_pitch_lock(self.config.get('playback', {}).get('pitch_lock', True))
+            
+            # Re-initialize last_autosave_time to respect new interval
+            self.last_autosave_time = datetime.datetime.now()
             
             self.save_config()
             self.statusBar().showMessage("Preferences updated and saved", 2000)
@@ -3307,14 +3341,19 @@ class MainWindow(QMainWindow):
         if not self.editor.toPlainText().strip():
             return
             
-        # Only backup if the document has been modified since last backup
-        if not force and not self.editor.document().isModified():
-            return
-            
         now = datetime.datetime.now()
-        interval_min = self.config.get('backup_interval', 5)
+        # Responsive Backup Logic:
+        # Trigger if:
+        # 1. 1 minute has passed since last backup (Safety Fallback)
+        # 2. OR User is idle for 3 seconds after a change (Responsive Save)
+        time_since_last_backup = (now - self.last_backup_time).total_seconds()
+        time_since_typing = (now - self.last_typed_time).total_seconds()
         
-        if force or (now - self.last_backup_time).total_seconds() >= (interval_min * 60):
+        interval_min = self.config.get('backup_interval', 1) # Default to 1 min security
+        interval_reached = time_since_last_backup >= (interval_min * 60)
+        is_idle = time_since_typing >= 3
+        
+        if force or is_idle or interval_reached:
             data = self.capture_state()
             # Use current filename as prefix, or 'unsaved'
             prefix = "unsaved"
@@ -3323,10 +3362,31 @@ class MainWindow(QMainWindow):
             
             if self.backup_manager.save_backup(data, prefix=prefix):
                 self.last_backup_time = now
-                # Reset modified flags to prevent redundant backups
-                self.editor.document().setModified(False)
-                self.is_dirty = False
-                # Pruning is now handled inside save_backup based on config
+                self.is_backup_dirty = False # Content successfully backed up
+                self.statusBar().showMessage("Background backup created.", 2000)
+                # Note: We intentionally DO NOT reset self.is_dirty or 
+                # self.editor.document().isModified() here so that the app
+                # still prompts to save on close.
+        
+        # Also check for Autosave
+        self.perform_autosave()
+
+    def perform_autosave(self):
+        """Automatically saves the document to its original path if enabled and interval reached."""
+        if not self.config['settings'].get('autosave_enabled', False):
+            return
+            
+        if not self.current_file_path or not self.is_dirty:
+            return
+            
+        now = datetime.datetime.now()
+        interval_min = self.config['settings'].get('autosave_interval', 5)
+        
+        if (now - self.last_autosave_time).total_seconds() >= (interval_min * 60):
+            # perform actual save
+            self.save_doc()
+            self.last_autosave_time = now
+            self.statusBar().showMessage(f"Autosaved: {os.path.basename(self.current_file_path)}", 3000)
 
     def late_initialization(self):
         """Heavy lifting that happens after the main window is stable."""
@@ -3439,11 +3499,12 @@ class MainWindow(QMainWindow):
         url = "https://github.com/uckthis/TranscriptFlow/releases/latest"
         QDesktopServices.openUrl(QUrl(url))
 
+
     def show_about(self):
         QMessageBox.about(
             self, "About TranscriptFlow Pro",
             "<h2>TranscriptFlow Pro</h2>"
-            "<p>Version 1.0.9</p>"
+            "<p>Version 1.1.0</p>"
             "<p>A professional transcription application.</p>"
             "<p><b>Features:</b></p>"
             "<ul>"

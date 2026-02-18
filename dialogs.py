@@ -1711,6 +1711,20 @@ class PreferencesDialog(QDialog):
         bk_layout.addStretch()
         gen_layout.addLayout(bk_layout)
         
+        # Autosave
+        as_layout = QHBoxLayout()
+        as_layout.addWidget(QLabel("Autosave:"))
+        self.autosave_check = QCheckBox("Automatically save to file every:")
+        self.autosave_check.setChecked(self.config['settings'].get('autosave_enabled', False))
+        as_layout.addWidget(self.autosave_check)
+        self.autosave_interval = QSpinBox()
+        self.autosave_interval.setRange(1, 60)
+        self.autosave_interval.setValue(self.config['settings'].get('autosave_interval', 5))
+        as_layout.addWidget(self.autosave_interval)
+        as_layout.addWidget(QLabel("min"))
+        as_layout.addStretch()
+        gen_layout.addLayout(as_layout)
+        
         add_sep(gen_layout)
         
         # Display
@@ -1903,6 +1917,8 @@ class PreferencesDialog(QDialog):
         self.config['default_window_size'] = [self.win_w.value(), self.win_h.value()]
         self.config['settings']['timecode_color'] = self.current_tc_color
         self.config['settings']['timecode_new_line'] = self.newline_tc_check.isChecked()
+        self.config['settings']['autosave_enabled'] = self.autosave_check.isChecked()
+        self.config['settings']['autosave_interval'] = self.autosave_interval.value()
         if 'playback' not in self.config: self.config['playback'] = {}
         self.config['playback']['pitch_lock'] = self.pitch_lock_check.isChecked()
         players = ['mpv', 'vlc', 'ffmpeg', 'quicktime']

@@ -1,21 +1,22 @@
-# TranscriptFlow Pro v1.0.9 - Urdu & RTL Edition
+# TranscriptFlow Pro v1.1.0 - Save Reliability & Autosave Edition
 
-This major update introduces professional **Right-to-Left (RTL)** support with specialized features for **Urdu** transcription, along with robust BiDi cursor management and font bundling.
+This update focuses on data safety and workflow reliability, introducing a highly responsive backup system, intelligent save suggestions, and a configurable autosave feature.
 
-## 🌙 Professional Urdu Support
-- **Auto-Font Switching**: Detects your Urdu keyboard and instantly switches the editor to the premium **'Jameel Noori Nastaleeq'** font.
-- **BiDi Cursor Perfection**: Resolved the "cursor jumping" issue. The editor now uses advanced block-level alignment forcing to ensure the cursor stays on the right and moves correctly for RTL text.
-- **Reversible Experience**: Switching back to English instantly restores your preferred standard font (e.g., Tahoma) and alignment without polluting your permanent settings.
-- **Bundled Typography**: The 'Jameel Noori Nastaleeq' font is now bundled and registered automatically—no manual installation required.
+## 🛡️ Superior Data Safety
+- **Adaptive Backup System**: Introduces a smart 3-second idle trigger. Backups happen automatically as soon as you pause typing, ensuring your work is captured instantly.
+- **Save Prompt Fix**: Resolved an issue where background backups would clear the "unsaved changes" status. The app will now always prompt you to save when closing if you have unsaved work.
+- **Configurable Autosave**: Added an "Autosave" feature that periodically saves your changes directly to the current file (configurable via Preferences).
 
-## 🛠️ Enhancements & Fixes
-- **Manual RTL UI**: Menus and toolbars now only flip when you want them to (via **View > RTL Mode**), giving you full control over the application layout.
-- **Alignment Persistence**: Pressing Enter now correctly maintains Right-Alignment for new blocks when in RTL or Urdu mode.
-- **Font Reset Mitigation**: Improved logic to prevent the editor from resetting to Tahoma when inserting timecodes or snippets.
-- **Startup Intelligence**: The app now checks your current keyboard at launch to set the correct font and alignment before you type.
+## 🧠 Intelligent Workflow
+- **Media-Aware Save Dialog**: When saving for the first time, the "Save As" dialog now intelligently suggests the same folder and filename as your open media file (e.g., `interview.mp4` -> `interview.tflow`).
+- **Path Persistence**: The application now remembers your last chosen save directory, making sequential saves faster and more predictable.
+
+## 🛠️ Other Improvements
+- **Optimized Defaults**: Set the background backup interval to 1 minute by default for maximum security.
+- **Unified Preferences**: Consolidated all application settings, including the new Autosave options, into the **Edit > Options** dialog.
 
 ## 📥 Installation
-Download `TranscriptFlow_Setup_1.0.9.exe` below and run it. 
+Download `TranscriptFlow_Setup_1.1.0.exe` below and run it. 
 
 ---
-**Tip**: If the editor font seems stuck, simply select your preferred English font in the ribbon once while using an English keyboard. The app will remember that as your default while still auto-switching to Urdu when needed!
+**Tip**: Enable Autosave in **Edit > Options** for truly hands-free session progress preservation!
