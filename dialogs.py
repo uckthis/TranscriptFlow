@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                              QColorDialog, QTextEdit, QTextBrowser, QDoubleSpinBox, QSpinBox, 
                              QCheckBox, QFileDialog, QFrame, QFontComboBox,
                              QGridLayout)
-from PyQt6.QtCore import Qt, QSize, QTimer
+from PyQt6.QtCore import Qt, QSize, QTimer, QRegularExpression
 from PyQt6.QtGui import QKeySequence, QKeyEvent, QColor, QFont, QFontDatabase, QTextCursor, QTextDocument
 import subprocess
 import re
@@ -1675,6 +1675,175 @@ class MediaOffsetDialog(QDialog):
         return self.offset_edit.text()
 
 
+
+# --- Find & Replace Dialog ---
+class FindReplaceDialog(QDialog):
+    def __init__(self, parent, initial_mode="find"):
+        super().__init__(parent, Qt.WindowType.Window)
+        self.setWindowTitle("Find & Replace")
+        self.setFixedWidth(550)
+        self.editor = parent.editor
+        
+        layout = QVBoxLayout(self)
+        self.form_layout = QFormLayout()
+        
+        self.find_input = QLineEdit()
+        self.replace_input = QLineEdit()
+        
+        self.form_layout.addRow("Find what:", self.find_input)
+        self.form_layout.addRow("Replace with:", self.replace_input)
+        
+        layout.addLayout(self.form_layout)
+        
+        # Options Group
+        options_layout = QGridLayout()
+        self.cb_case = QCheckBox("Match case")
+        self.cb_whole = QCheckBox("Whole words")
+        self.cb_regex = QCheckBox("Regular expressions")
+        self.cb_wrap = QCheckBox("Wrap around")
+        self.cb_wrap.setChecked(True)
+        
+        options_layout.addWidget(self.cb_case, 0, 0)
+        options_layout.addWidget(self.cb_whole, 0, 1)
+        options_layout.addWidget(self.cb_regex, 1, 0)
+        options_layout.addWidget(self.cb_wrap, 1, 1)
+        
+        layout.addLayout(options_layout)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        self.btn_find = QPushButton("Find Next")
+        self.btn_replace = QPushButton("Replace")
+        self.btn_replace_all = QPushButton("Replace All")
+        self.btn_close = QPushButton("Close")
+        
+        # Ensure buttons have enough width
+        for btn in [self.btn_find, self.btn_replace, self.btn_replace_all, self.btn_close]:
+            btn.setMinimumWidth(110)
+        
+        btn_layout.addWidget(self.btn_find)
+        btn_layout.addWidget(self.btn_replace)
+        btn_layout.addWidget(self.btn_replace_all)
+        btn_layout.addWidget(self.btn_close)
+        
+        layout.addLayout(btn_layout)
+        
+        # Set visibility based on mode
+        if initial_mode == "find":
+            self.replace_input.hide()
+            self.btn_replace.hide()
+            self.btn_replace_all.hide()
+            # Need to hide label too
+            self.form_layout.labelForField(self.replace_input).hide()
+            self.setWindowTitle("Find")
+            
+        # Connections
+        self.btn_find.clicked.connect(self.find_next)
+        self.btn_replace.clicked.connect(self.replace)
+        self.btn_replace_all.clicked.connect(self.replace_all)
+        self.btn_close.clicked.connect(self.close)
+        self.find_input.returnPressed.connect(self.find_next)
+
+    def get_flags(self):
+        flags = QTextDocument.FindFlag(0)
+        if self.cb_case.isChecked():
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        if self.cb_whole.isChecked():
+            flags |= QTextDocument.FindFlag.FindWholeWords
+        return flags
+
+    def find_next(self):
+        search_text = self.find_input.text()
+        if not search_text:
+            return False
+            
+        flags = self.get_flags()
+        
+        if self.cb_regex.isChecked():
+            regex_options = QRegularExpression.PatternOption.NoPatternOption
+            if not self.cb_case.isChecked():
+                regex_options |= QRegularExpression.PatternOption.CaseInsensitiveOption
+            regex = QRegularExpression(search_text, regex_options)
+            found = self.editor.find(regex, flags)
+        else:
+            found = self.editor.find(search_text, flags)
+            
+        if not found and self.cb_wrap.isChecked():
+            # Wrap around: move cursor to start/end and try once more
+            cursor = self.editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.editor.setTextCursor(cursor)
+            
+            if self.cb_regex.isChecked():
+                found = self.editor.find(QRegularExpression(search_text), flags)
+            else:
+                found = self.editor.find(search_text, flags)
+                
+        if not found:
+            QMessageBox.information(self, "Find", f"'{search_text}' not found.")
+            
+        return found
+
+    def find_previous(self):
+        search_text = self.find_input.text()
+        if not search_text:
+            return False
+            
+        flags = self.get_flags() | QTextDocument.FindFlag.FindBackward
+        
+        if self.cb_regex.isChecked():
+            regex_options = QRegularExpression.PatternOption.NoPatternOption
+            if not self.cb_case.isChecked():
+                regex_options |= QRegularExpression.PatternOption.CaseInsensitiveOption
+            regex = QRegularExpression(search_text, regex_options)
+            found = self.editor.find(regex, flags)
+        else:
+            found = self.editor.find(search_text, flags)
+            
+        if not found and self.cb_wrap.isChecked():
+            cursor = self.editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            self.editor.setTextCursor(cursor)
+            
+            if self.cb_regex.isChecked():
+                found = self.editor.find(QRegularExpression(search_text), flags)
+            else:
+                found = self.editor.find(search_text, flags)
+                
+        if not found:
+            QMessageBox.information(self, "Find", f"'{search_text}' not found.")
+            
+        return found
+
+    def replace(self):
+        if not self.editor.textCursor().hasSelection():
+            self.find_next()
+            return
+            
+        self.editor.textCursor().insertText(self.replace_input.text())
+        self.find_next()
+
+    def replace_all(self):
+        search_text = self.find_input.text()
+        replace_text = self.replace_input.text()
+        if not search_text:
+            return
+            
+        # Start at the very beginning
+        cursor = self.editor.textCursor()
+        cursor.beginEditBlock()
+        
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        self.editor.setTextCursor(cursor)
+        
+        count = 0
+        while self.find_next():
+            self.editor.textCursor().insertText(replace_text)
+            count += 1
+            
+        cursor.endEditBlock()
+        QMessageBox.information(self, "Replace All", f"Replaced {count} occurrences of '{search_text}'.")
 
 class PreferencesDialog(QDialog):
     def __init__(self, parent, config, defaults=None):

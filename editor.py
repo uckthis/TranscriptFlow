@@ -411,6 +411,41 @@ class TranscriptEditor(QTextEdit):
         fmt.setFontUnderline(not self.currentCharFormat().fontUnderline())
         self.mergeCurrentCharFormat(fmt)
 
+    def cycle_case(self):
+        """Cycles selected text through lowercase -> UPPERCASE -> Title Case (Word-style)"""
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            # If no selection, select the word under cursor
+            cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+            
+        text = cursor.selectedText()
+        if not text:
+            return
+
+        # Handle unique logic for empty or whitespace-only
+        if not text.strip():
+            return
+
+        # Cycle: lower -> UPPER -> Title -> lower
+        if text.isupper():
+            # From UPPERCASE to Title Case
+            new_text = text.title()
+        elif text.istitle() or (len(text) > 0 and text[0].isupper() and text[1:].islower()):
+            # From Title Case to lowercase
+            new_text = text.lower()
+        else:
+            # From lowercase (or mixed) to UPPERCASE
+            new_text = text.upper()
+            
+        # Perform replacement
+        cursor.beginEditBlock()
+        cursor.insertText(new_text)
+        
+        # Re-select the replaced text to allow continuous cycling
+        cursor.setPosition(cursor.position() - len(new_text), QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+        cursor.endEditBlock()
+
     def set_text_color(self, color):
         self.settings['font_color'] = color
         fmt = self.currentCharFormat()

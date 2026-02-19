@@ -11,6 +11,9 @@ Usage:
     python build_installer.py              # Build executable only
     python build_installer.py --installer  # Build executable and installer
     python build_installer.py --clean      # Clean build directories only
+
+Note: This script preserves the 'installer_output' directory to keep previous versions.
+      You should ignore/archive old versions manually as needed.
 """
 
 import os
@@ -52,7 +55,7 @@ def clean_build():
     """Remove previous build artifacts"""
     print_step("Cleaning previous builds...")
     
-    dirs_to_clean = ['build', 'dist', '__pycache__', 'installer_output']
+    dirs_to_clean = ['build', 'dist', '__pycache__']
     files_to_clean = ['TranscriptFlow.spec.bak']
     
     for dir_name in dirs_to_clean:
@@ -76,16 +79,20 @@ def check_dependencies():
     print_step("Checking dependencies...")
     
     # Check Python packages
-    required_packages = ['PyInstaller', 'PyQt6', 'enchant']
+    required_packages = {
+        'PyInstaller': 'PyInstaller',
+        'PyQt6': 'PyQt6',
+        'enchant': 'enchant'
+    }
     missing_packages = []
     
-    for package in required_packages:
+    for display_name, import_name in required_packages.items():
         try:
-            __import__(package.lower().replace('-', '_'))
-            print_success(f"{package} is installed")
+            __import__(import_name)
+            print_success(f"{display_name} is installed")
         except ImportError:
-            missing_packages.append(package)
-            print_error(f"{package} is NOT installed")
+            missing_packages.append(display_name)
+            print_error(f"{display_name} is NOT installed")
     
     if missing_packages:
         print_error(f"Missing packages: {', '.join(missing_packages)}")
@@ -140,19 +147,22 @@ def verify_build():
     print_success(f"Executable found: {exe_path}")
     print(f"  Size: {exe_path.stat().st_size / (1024*1024):.2f} MB")
     
-    # Check for required files
-    required_files = [
-        'dist/TranscriptFlow/app_icon.ico',
-        'dist/TranscriptFlow/mpv-1.dll',
-        'dist/TranscriptFlow/dicts',
-    ]
+    # Check for required files - check both root and _internal (PyInstaller 6+)
+    required_files = ['app_icon.ico', 'mpv-1.dll', 'dicts']
     
     all_present = True
-    for file_path in required_files:
-        if os.path.exists(file_path):
-            print_success(f"Found: {file_path}")
+    internal_dir = Path('dist/TranscriptFlow/_internal')
+    root_dir = Path('dist/TranscriptFlow')
+    
+    for filename in required_files:
+        path_internal = internal_dir / filename
+        path_root = root_dir / filename
+        
+        if path_root.exists() or path_internal.exists():
+            found_path = path_root if path_root.exists() else path_internal
+            print_success(f"Found: {found_path}")
         else:
-            print_warning(f"Missing: {file_path}")
+            print_warning(f"Missing: {filename} (checked root and _internal)")
             all_present = False
     
     return all_present
@@ -198,9 +208,11 @@ def build_installer():
         if result.returncode == 0:
             print_success("Installer built successfully")
             
-            # Find the installer file
+            # Find the newest installer file
             installer_files = list(Path('installer_output').glob('*.exe'))
             if installer_files:
+                # Sort by modification time, newest first
+                installer_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
                 installer_path = installer_files[0]
                 print(f"  Output: {installer_path}")
                 print(f"  Size: {installer_path.stat().st_size / (1024*1024):.2f} MB")

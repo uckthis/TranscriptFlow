@@ -111,7 +111,7 @@ from waveform import WaveformWidget, WaveformWorker
 from dialogs import (MediaSourceDialog, SnippetsManagerDialog, 
                       ShortcutsManagerDialog, TranscriptSettingsDialog, 
                       ExportSettingsDialog, AdjustTimecodesDialog, MediaOffsetDialog,
-                      SpellCheckDialog, SyncTranscriptDialog)
+                      SpellCheckDialog, SyncTranscriptDialog, FindReplaceDialog)
 from backup_dialog import BackupSettingsDialog
 import hardware
 from utils import Exporter, TimecodeHelper, SettingsManager, FileManager, BackupManager, TranscriptParser
@@ -249,6 +249,8 @@ class MainWindow(QMainWindow):
             },
             'recent_files': []
         }
+        
+        self.find_dialog = None # Initialize Find & Replace dialog state
         self.config = self.sm.load(default_config)
         self.settings = self.config['settings']
         self.shortcuts = self.config['shortcuts']
@@ -1629,9 +1631,7 @@ class MainWindow(QMainWindow):
         self.recent_menu = file_menu.addMenu("Open Recent")
         self.rebuild_recent_menu()
         
-        file_menu.addSeparator()
         
-        self.add_action_safe(file_menu, "Close Window", self.close, "Ctrl+W")
         self.add_action_safe(file_menu, "Save", self.save_doc, QKeySequence.StandardKey.Save)
         self.add_action_safe(file_menu, "Save As...", self.save_as_doc, QKeySequence.StandardKey.SaveAs)
 
@@ -1700,12 +1700,15 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         
         self.add_action_safe(edit_menu, "Options...", self.open_options)
-        
         self.add_action_safe(edit_menu, "Edit Shortcuts...", self.open_shortcuts_dialog)
         self.add_action_safe(edit_menu, "Edit Snippets...", self.open_snippets_dialog)
         edit_menu.addSeparator()
         self.add_action_safe(edit_menu, "Find...", self.find_text, QKeySequence.StandardKey.Find)
-        self.add_action_safe(edit_menu, "Options...", self.open_options)
+        self.add_action_safe(edit_menu, "Find Next", self.find_next_silent, "F3")
+        self.add_action_safe(edit_menu, "Find Previous", self.find_prev_silent, "Alt+F3")
+        self.add_action_safe(edit_menu, "Change Case", self.editor.cycle_case, "Shift+F3")
+        self.add_action_safe(edit_menu, "Replace...", self.replace_text, QKeySequence.StandardKey.Replace)
+        edit_menu.addSeparator()
         self.add_action_safe(edit_menu, "Set Up Foot Pedal...", self.setup_foot_pedal)
         self.add_action_safe(edit_menu, "Manage USB Devices...", self.manage_usb_devices)
 
@@ -3504,7 +3507,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "About TranscriptFlow Pro",
             "<h2>TranscriptFlow Pro</h2>"
-            "<p>Version 1.1.0</p>"
+            "<p>Version 1.1.1</p>"
             "<p>A professional transcription application.</p>"
             "<p><b>Features:</b></p>"
             "<ul>"
@@ -3521,13 +3524,54 @@ class MainWindow(QMainWindow):
         )
 
     def find_text(self):
-        t, ok = QInputDialog.getText(self, "Find", "Find what:")
-        if ok and t:
-            cursor = self.editor.document().find(t)
-            if not cursor.isNull():
-                self.editor.setTextCursor(cursor)
-            else:
-                QMessageBox.information(self, "Find", f"'{t}' not found.")
+        """Open Find dialog (Modeless)"""
+        if not self.find_dialog:
+            self.find_dialog = FindReplaceDialog(self, initial_mode="find")
+        else:
+            # Switch to find mode if it's already open
+            self.find_dialog.replace_input.hide()
+            self.find_dialog.btn_replace.hide()
+            self.find_dialog.btn_replace_all.hide()
+            self.find_dialog.form_layout.labelForField(self.find_dialog.replace_input).hide()
+            self.find_dialog.setWindowTitle("Find")
+            
+        self.find_dialog.show()
+        self.find_dialog.raise_()
+        self.find_dialog.activateWindow()
+        self.find_dialog.find_input.setFocus()
+        self.find_dialog.find_input.selectAll()
+
+    def replace_text(self):
+        """Open Replace dialog (Modeless)"""
+        if not self.find_dialog:
+            self.find_dialog = FindReplaceDialog(self, initial_mode="replace")
+        else:
+            # Switch to replace mode
+            self.find_dialog.replace_input.show()
+            self.find_dialog.btn_replace.show()
+            self.find_dialog.btn_replace_all.show()
+            self.find_dialog.form_layout.labelForField(self.find_dialog.replace_input).show()
+            self.find_dialog.setWindowTitle("Find & Replace")
+            
+        self.find_dialog.show()
+        self.find_dialog.raise_()
+        self.find_dialog.activateWindow()
+        self.find_dialog.find_input.setFocus()
+        self.find_dialog.find_input.selectAll()
+
+    def find_next_silent(self):
+        """Perform 'Find Next' using last search criteria"""
+        if self.find_dialog and self.find_dialog.find_input.text():
+            self.find_dialog.find_next()
+        else:
+            self.find_text()
+
+    def find_prev_silent(self):
+        """Perform 'Find Previous' using last search criteria"""
+        if self.find_dialog and self.find_dialog.find_input.text():
+            self.find_dialog.find_previous()
+        else:
+            self.find_text()
 
     def choose_color(self):
         # Use existing color as default

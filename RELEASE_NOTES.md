@@ -1,22 +1,25 @@
-# TranscriptFlow Pro v1.1.0 - Save Reliability & Autosave Edition
+# TranscriptFlow Pro v1.1.1 - Find & Replace & Smart Text Tools
 
-This update focuses on data safety and workflow reliability, introducing a highly responsive backup system, intelligent save suggestions, and a configurable autosave feature.
+This update introduces powerful text manipulation tools, including a professional Find & Replace suite and a "Change Case" feature inspired by MS Word.
 
-## 🛡️ Superior Data Safety
-- **Adaptive Backup System**: Introduces a smart 3-second idle trigger. Backups happen automatically as soon as you pause typing, ensuring your work is captured instantly.
-- **Save Prompt Fix**: Resolved an issue where background backups would clear the "unsaved changes" status. The app will now always prompt you to save when closing if you have unsaved work.
-- **Configurable Autosave**: Added an "Autosave" feature that periodically saves your changes directly to the current file (configurable via Preferences).
+## 🔍 Professional Find & Replace
+- **Persistent Dialog**: Use `Ctrl+F` (Find) or `Ctrl+H` (Replace) to open. The window stays open while you edit.
+- **Find Next/Previous**:
+    - Use the **Find Next** button in the dialog or press **F3**.
+    - Use **Alt+F3** for Find Previous (works even when the dialog is closed).
+- **Advanced Options**: Supports Match Case, Whole Words, Regular Expressions, and Wrap Around.
+- **Safe Replace All**: Replaces everything at once and is fully undoable with a single `Ctrl+Z`.
 
-## 🧠 Intelligent Workflow
-- **Media-Aware Save Dialog**: When saving for the first time, the "Save As" dialog now intelligently suggests the same folder and filename as your open media file (e.g., `interview.mp4` -> `interview.tflow`).
-- **Path Persistence**: The application now remembers your last chosen save directory, making sequential saves faster and more predictable.
+## 🔠 Smart Text Manipulation
+- **Change Case (Shift+F3)**: Cycle through `lowercase` -> `UPPERCASE` -> `Title Case` instantly. If no text is selected, it automatically picks the word under the cursor.
 
-## 🛠️ Other Improvements
-- **Optimized Defaults**: Set the background backup interval to 1 minute by default for maximum security.
-- **Unified Preferences**: Consolidated all application settings, including the new Autosave options, into the **Edit > Options** dialog.
+## 🛠️ Fixes & Refinement
+- **SRT Export Fix**: Resolved an issue where SRT exports would fail due to a missing timecode conversion attribute.
+- **Accidental Close Protection**: Removed the `Ctrl+W` shortcut to prevent accidentally closing the application during deep work sessions.
+- **Improved Dialog Layouts**: Widened several dialogs to ensure long labels (like "Replace All") are clearly visible.
 
 ## 📥 Installation
-Download `TranscriptFlow_Setup_1.1.0.exe` below and run it. 
+Download `TranscriptFlow_Setup_1.1.1.exe` below and run it. 
 
 ---
-**Tip**: Enable Autosave in **Edit > Options** for truly hands-free session progress preservation!
+**Tip**: Use **F3** and **Alt+F3** to jump between matches quickly without even touching your mouse!

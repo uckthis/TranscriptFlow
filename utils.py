@@ -338,7 +338,7 @@ class Exporter:
                 body = Exporter._html_to_srt_basic(body)
                 
             if not body: body = " " # Ensure non-empty
-
+            
             start_tc = Exporter._ms_to_srt_time(ms_start)
             end_tc = Exporter._ms_to_srt_time(ms_end)
             
@@ -346,6 +346,16 @@ class Exporter:
             counter += 1
             
         return srt_output
+
+    @staticmethod
+    def _ms_to_srt_time(ms):
+        """Converts milliseconds to SRT format: HH:MM:SS,mmm"""
+        if ms < 0: ms = 0
+        h = int(ms // 3600000)
+        m = int((ms % 3600000) // 60000)
+        s = int((ms % 60000) // 1000)
+        mmm = int(ms % 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{mmm:03d}"
 
     @staticmethod
     def _html_to_srt_basic(html):
