@@ -205,6 +205,7 @@ class MPVBackend(MediaEngineBackend):
             self._lib.mpv_set_option_string(self.handle, b"osc", b"no")
             self._lib.mpv_set_option_string(self.handle, b"osd-bar", b"no")
             self._lib.mpv_set_option_string(self.handle, b"osd-level", b"0")
+            self._lib.mpv_set_option_string(self.handle, b"volume-max", b"400")
             
             # Critical: Set WID as OPTION before initialization for rendering stability
             if self._pending_wid:

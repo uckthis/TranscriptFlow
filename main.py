@@ -472,6 +472,9 @@ class MainWindow(QMainWindow):
         self.speed_label = QLabel("1.0x"); sliders_layout.addWidget(self.sl_rate); sliders_layout.addWidget(self.speed_label)
         self.sl_vol = ClickableSlider(Qt.Orientation.Horizontal, overlay_text="VOLUME"); self.sl_vol.setRange(0, 100); self.sl_vol.setValue(100); self.sl_vol.valueChanged.connect(self.on_volume_changed)
         self.volume_label = QLabel("100%"); sliders_layout.addWidget(self.sl_vol); sliders_layout.addWidget(self.volume_label)
+        
+        self.sl_boost = ClickableSlider(Qt.Orientation.Horizontal, overlay_text="BOOST"); self.sl_boost.setRange(0, 300); self.sl_boost.setValue(0); self.sl_boost.valueChanged.connect(self.on_volume_changed)
+        self.boost_label = QLabel("Boost: 0%"); sliders_layout.addWidget(self.sl_boost); sliders_layout.addWidget(self.boost_label)
         self.controls_layout.addWidget(self.sliders_container)
         
         self.left_splitter.addWidget(self.controls_panel); self.left_layout.addWidget(self.left_splitter)
@@ -1385,9 +1388,12 @@ class MainWindow(QMainWindow):
         """Apply saved playback settings to UI controls"""
         # Volume
         saved_volume = self.playback_config.get('volume', 70)
+        saved_boost = self.playback_config.get('boost', 0)
         self.sl_vol.setValue(saved_volume)
+        self.sl_boost.setValue(saved_boost)
         self.volume_label.setText(f"{saved_volume}%")
-        self.engine.set_volume(saved_volume)
+        self.boost_label.setText(f"Boost: {saved_boost}%")
+        self.engine.set_volume(saved_volume + saved_boost)
         
         # Speed
         saved_speed = self.playback_config.get('speed', 100)
@@ -1448,12 +1454,18 @@ class MainWindow(QMainWindow):
         self.config['playback'] = self.playback_config
         self.save_config()
 
-    def on_volume_changed(self, value):
-        """Handle volume slider change"""
-        self.engine.set_volume(value)
-        self.volume_label.setText(f"{value}%")
+    def on_volume_changed(self, value=None):
+        """Handle volume or boost slider change"""
+        vol = self.sl_vol.value()
+        boost = self.sl_boost.value()
+        total = vol + boost
+        self.engine.set_volume(total)
+        self.volume_label.setText(f"{vol}%")
+        self.boost_label.setText(f"Boost: {boost}%")
+        
         # Save to config
-        self.playback_config['volume'] = value
+        self.playback_config['volume'] = vol
+        self.playback_config['boost'] = boost
         self.config['playback'] = self.playback_config
         self.save_config()
 
@@ -2184,8 +2196,14 @@ class MainWindow(QMainWindow):
         # EXPLICIT ENGINE SEEK: Ensure engine actually starts at 0
         QTimer.singleShot(300, lambda: self.engine.seek(0))
         
-        # Apply saved volume after a short delay to ensure media is loaded
-        QTimer.singleShot(200, lambda: self.engine.set_volume(self.playback_config.get('volume', 70)))
+        # Apply saved volume and speed after a short delay to ensure media is loaded
+        def apply_playback():
+            vol = self.sl_vol.value()
+            boost = self.sl_boost.value()
+            self.engine.set_volume(vol + boost)
+            self.engine.set_rate(self.sl_rate.value() / 100.0)
+            
+        QTimer.singleShot(300, apply_playback)
         
         # CONDITIONAL AUTO-PLAY
         def check_autoplay():
@@ -3507,7 +3525,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "About TranscriptFlow Pro",
             "<h2>TranscriptFlow Pro</h2>"
-            "<p>Version 1.1.1</p>"
+            "<p>Version 1.1.2</p>"
             "<p>A professional transcription application.</p>"
             "<p><b>Features:</b></p>"
             "<ul>"

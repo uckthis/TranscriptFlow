@@ -1,25 +1,22 @@
-# TranscriptFlow Pro v1.1.1 - Find & Replace & Smart Text Tools
+# TranscriptFlow Pro v1.1.2 - Format-Aware Search & Extreme Boost
 
-This update introduces powerful text manipulation tools, including a professional Find & Replace suite and a "Change Case" feature inspired by MS Word.
+This update brings professional formatting support to Find & Replace and a massive volume boost for difficult recordings.
 
-## 🔍 Professional Find & Replace
-- **Persistent Dialog**: Use `Ctrl+F` (Find) or `Ctrl+H` (Replace) to open. The window stays open while you edit.
-- **Find Next/Previous**:
-    - Use the **Find Next** button in the dialog or press **F3**.
-    - Use **Alt+F3** for Find Previous (works even when the dialog is closed).
-- **Advanced Options**: Supports Match Case, Whole Words, Regular Expressions, and Wrap Around.
-- **Safe Replace All**: Replaces everything at once and is fully undoable with a single `Ctrl+Z`.
+## 🔍 Format-Aware Find & Replace
+- **Find Formatting**: You can now filter search results by formatting. Search for "text" only where it is **Bold** or *Italic*.
+- **Replace with Format**: Apply Bold or Italic styles to your replacement text automatically.
+- **Improved Logic**: Find Next and Replace All now correctly respect these formatting constraints across the entire document.
 
-## 🔠 Smart Text Manipulation
-- **Change Case (Shift+F3)**: Cycle through `lowercase` -> `UPPERCASE` -> `Title Case` instantly. If no text is selected, it automatically picks the word under the cursor.
+## 🔊 Extreme Volume Boost (400%)
+- **Triple the Boost**: The Volume Boost control now allows for up to **300% additional gain**, bringing the total volume capability to **400%**. Perfect for quiet field recordings or distant speakers.
+- **Smart Initialization**: Your volume, boost, and playback speed settings are now correctly remembered and reapplied automatically when loading new media files.
 
 ## 🛠️ Fixes & Refinement
-- **SRT Export Fix**: Resolved an issue where SRT exports would fail due to a missing timecode conversion attribute.
-- **Accidental Close Protection**: Removed the `Ctrl+W` shortcut to prevent accidentally closing the application during deep work sessions.
-- **Improved Dialog Layouts**: Widened several dialogs to ensure long labels (like "Replace All") are clearly visible.
+- **Persistent Playback Speed**: Fixed a bug where the playback rate would reset to 1.0x every time a new file was loaded.
+- **Engine Optimization**: Adjusted MPV backend initialization to support the expanded volume range without software clipping.
 
 ## 📥 Installation
-Download `TranscriptFlow_Setup_1.1.1.exe` below and run it. 
+Download `TranscriptFlow_Setup_1.1.2.exe` below and run it. 
 
 ---
-**Tip**: Use **F3** and **Alt+F3** to jump between matches quickly without even touching your mouse!
+**Tip**: Combine formatting checkboxes with "Match Case" for ultimate precision when cleaning up transcripts!

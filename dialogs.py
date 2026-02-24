@@ -1710,6 +1710,26 @@ class FindReplaceDialog(QDialog):
         
         layout.addLayout(options_layout)
         
+        # Formatting Options
+        self.format_layout = QGridLayout()
+        self.find_fmt_lbl = QLabel("Find Format:")
+        self.cb_find_bold = QCheckBox("Bold")
+        self.cb_find_italic = QCheckBox("Italic")
+        
+        self.replace_fmt_lbl = QLabel("Replace Format:")
+        self.cb_replace_bold = QCheckBox("Bold")
+        self.cb_replace_italic = QCheckBox("Italic")
+        
+        self.format_layout.addWidget(self.find_fmt_lbl, 0, 0)
+        self.format_layout.addWidget(self.cb_find_bold, 0, 1)
+        self.format_layout.addWidget(self.cb_find_italic, 0, 2)
+        
+        self.format_layout.addWidget(self.replace_fmt_lbl, 1, 0)
+        self.format_layout.addWidget(self.cb_replace_bold, 1, 1)
+        self.format_layout.addWidget(self.cb_replace_italic, 1, 2)
+        
+        layout.addLayout(self.format_layout)
+        
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
@@ -1736,6 +1756,11 @@ class FindReplaceDialog(QDialog):
             self.btn_replace_all.hide()
             # Need to hide label too
             self.form_layout.labelForField(self.replace_input).hide()
+            
+            self.replace_fmt_lbl.hide()
+            self.cb_replace_bold.hide()
+            self.cb_replace_italic.hide()
+            
             self.setWindowTitle("Find")
             
         # Connections
@@ -1753,97 +1778,154 @@ class FindReplaceDialog(QDialog):
             flags |= QTextDocument.FindFlag.FindWholeWords
         return flags
 
-    def find_next(self):
+    def _check_format_match(self, cursor):
+        fmt = cursor.charFormat()
+        bold_req = self.cb_find_bold.isChecked()
+        italic_req = self.cb_find_italic.isChecked()
+        
+        bold_ok = not bold_req or fmt.fontWeight() == QFont.Weight.Bold
+        italic_ok = not italic_req or fmt.fontItalic()
+        return bold_ok and italic_ok
+
+    def _apply_replace_format(self, cursor):
+        # We only apply if at least one checkbox is checked
+        if self.cb_replace_bold.isChecked() or self.cb_replace_italic.isChecked():
+            fmt = cursor.charFormat()
+            if self.cb_replace_bold.isChecked():
+                fmt.setFontWeight(QFont.Weight.Bold)
+            if self.cb_replace_italic.isChecked():
+                fmt.setFontItalic(True)
+            cursor.setCharFormat(fmt)
+
+    def find_next(self, quiet=False):
         search_text = self.find_input.text()
         if not search_text:
             return False
             
         flags = self.get_flags()
+        wrapped = False
+        initial_pos = self.editor.textCursor().position()
         
-        if self.cb_regex.isChecked():
-            regex_options = QRegularExpression.PatternOption.NoPatternOption
-            if not self.cb_case.isChecked():
-                regex_options |= QRegularExpression.PatternOption.CaseInsensitiveOption
-            regex = QRegularExpression(search_text, regex_options)
-            found = self.editor.find(regex, flags)
-        else:
-            found = self.editor.find(search_text, flags)
-            
-        if not found and self.cb_wrap.isChecked():
-            # Wrap around: move cursor to start/end and try once more
-            cursor = self.editor.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            self.editor.setTextCursor(cursor)
-            
+        while True:
             if self.cb_regex.isChecked():
-                found = self.editor.find(QRegularExpression(search_text), flags)
+                regex_options = QRegularExpression.PatternOption.NoPatternOption
+                if not self.cb_case.isChecked():
+                    regex_options |= QRegularExpression.PatternOption.CaseInsensitiveOption
+                regex = QRegularExpression(search_text, regex_options)
+                found = self.editor.find(regex, flags)
             else:
                 found = self.editor.find(search_text, flags)
                 
-        if not found:
-            QMessageBox.information(self, "Find", f"'{search_text}' not found.")
-            
-        return found
+            if found:
+                if self._check_format_match(self.editor.textCursor()):
+                    return True
+                # Format didn't match, loop again to find next
+                if wrapped and self.editor.textCursor().position() >= initial_pos:
+                    break 
+            else:
+                if not wrapped and self.cb_wrap.isChecked():
+                    wrapped = True
+                    cursor = self.editor.textCursor()
+                    cursor.movePosition(QTextCursor.MoveOperation.Start)
+                    self.editor.setTextCursor(cursor)
+                    continue
+                else:
+                    break
+                    
+        if not quiet:
+            QMessageBox.information(self, "Find", f"'{search_text}' with specified formatting not found.")
+        return False
 
-    def find_previous(self):
+    def find_previous(self, quiet=False):
         search_text = self.find_input.text()
         if not search_text:
             return False
             
         flags = self.get_flags() | QTextDocument.FindFlag.FindBackward
+        wrapped = False
+        initial_pos = self.editor.textCursor().position()
         
-        if self.cb_regex.isChecked():
-            regex_options = QRegularExpression.PatternOption.NoPatternOption
-            if not self.cb_case.isChecked():
-                regex_options |= QRegularExpression.PatternOption.CaseInsensitiveOption
-            regex = QRegularExpression(search_text, regex_options)
-            found = self.editor.find(regex, flags)
-        else:
-            found = self.editor.find(search_text, flags)
-            
-        if not found and self.cb_wrap.isChecked():
-            cursor = self.editor.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            self.editor.setTextCursor(cursor)
-            
+        while True:
             if self.cb_regex.isChecked():
-                found = self.editor.find(QRegularExpression(search_text), flags)
+                regex_options = QRegularExpression.PatternOption.NoPatternOption
+                if not self.cb_case.isChecked():
+                    regex_options |= QRegularExpression.PatternOption.CaseInsensitiveOption
+                regex = QRegularExpression(search_text, regex_options)
+                found = self.editor.find(regex, flags)
             else:
                 found = self.editor.find(search_text, flags)
                 
-        if not found:
-            QMessageBox.information(self, "Find", f"'{search_text}' not found.")
-            
-        return found
+            if found:
+                if self._check_format_match(self.editor.textCursor()):
+                    return True
+                if wrapped and self.editor.textCursor().position() <= initial_pos:
+                    break
+            else:
+                if not wrapped and self.cb_wrap.isChecked():
+                    wrapped = True
+                    cursor = self.editor.textCursor()
+                    cursor.movePosition(QTextCursor.MoveOperation.End)
+                    self.editor.setTextCursor(cursor)
+                    continue
+                else:
+                    break
+                    
+        if not quiet:
+            QMessageBox.information(self, "Find", f"'{search_text}' with specified formatting not found.")
+        return False
 
     def replace(self):
-        if not self.editor.textCursor().hasSelection():
-            self.find_next()
-            return
+        cursor = self.editor.textCursor()
+        # Ensure we have a valid format-matching selection
+        if not cursor.hasSelection() or cursor.selectedText() != self.find_input.text() or not self._check_format_match(cursor):
+            if not self.find_next(quiet=True):
+                return
+            cursor = self.editor.textCursor()
             
-        self.editor.textCursor().insertText(self.replace_input.text())
-        self.find_next()
+        cursor.beginEditBlock()
+        new_text = self.replace_input.text()
+        cursor.insertText(new_text)
+        
+        # Apply formatting to replacement if needed
+        if len(new_text) > 0:
+            # Re-select the inserted text
+            cursor.setPosition(cursor.position() - len(new_text), QTextCursor.MoveMode.KeepAnchor)
+            self._apply_replace_format(cursor)
+            # Deselect so find_next continues from the end of replacement
+            cursor.clearSelection()
+            self.editor.setTextCursor(cursor)
+            
+        cursor.endEditBlock()
+        self.find_next(quiet=True)
 
     def replace_all(self):
         search_text = self.find_input.text()
-        replace_text = self.replace_input.text()
         if not search_text:
             return
             
-        # Start at the very beginning
+        # Move to start for predictable replace all
         cursor = self.editor.textCursor()
-        cursor.beginEditBlock()
-        
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         self.editor.setTextCursor(cursor)
         
         count = 0
-        while self.find_next():
-            self.editor.textCursor().insertText(replace_text)
+        self.editor.setUpdatesEnabled(False)
+        cursor.beginEditBlock()
+        
+        while self.find_next(quiet=True):
             count += 1
-            
+            inner_cursor = self.editor.textCursor()
+            new_text = self.replace_input.text()
+            inner_cursor.insertText(new_text)
+            if len(new_text) > 0:
+                inner_cursor.setPosition(inner_cursor.position() - len(new_text), QTextCursor.MoveMode.KeepAnchor)
+                self._apply_replace_format(inner_cursor)
+                inner_cursor.clearSelection()
+                self.editor.setTextCursor(inner_cursor)
+        
         cursor.endEditBlock()
-        QMessageBox.information(self, "Replace All", f"Replaced {count} occurrences of '{search_text}'.")
+        self.editor.setUpdatesEnabled(True)
+        QMessageBox.information(self, "Replace All", f"Replaced {count} occurrences.")
 
 class PreferencesDialog(QDialog):
     def __init__(self, parent, config, defaults=None):
