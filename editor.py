@@ -426,24 +426,16 @@ class TranscriptEditor(QTextEdit):
         if not text.strip():
             return
 
-        # Cycle: Title/Mixed -> UPPER -> lower -> Title
+        # Cycle: lower -> UPPER -> Title -> lower
         if text.isupper():
             # From UPPERCASE to Title Case
             new_text = text.title()
-        elif not text.islower() and not text.isupper():
-            # If Title Case or Mixed (like "Speaker:"), go to UPPERCASE first
-            new_text = text.upper()
+        elif text.istitle() or (len(text) > 0 and text[0].isupper() and text[1:].islower()):
+            # From Title Case to lowercase
+            new_text = text.lower()
         else:
-            # From lowercase to UPPERCASE (standard)
-            # Actually, to follow the flow: lower -> Title -> UPPER
-            # Wait, user wants Title -> UPPER.
-            # Let's do: Lower -> UPPER -> Title -> Lower
-            # No, user said: "first toggle [of Speaker:] ... converts to uppercase"
-            # So: Title -> UPPER (1st), UPPER -> lower (2nd), lower -> Title (3rd)
-            if text.islower():
-                new_text = text.title()
-            else:
-                new_text = text.upper()
+            # From lowercase (or mixed) to UPPERCASE
+            new_text = text.upper()
             
         # Perform replacement
         cursor.beginEditBlock()
