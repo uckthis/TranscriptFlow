@@ -82,7 +82,9 @@ def check_dependencies():
     required_packages = {
         'PyInstaller': 'PyInstaller',
         'PyQt6': 'PyQt6',
-        'enchant': 'enchant'
+        'enchant': 'enchant',
+        'winrt-runtime': 'winrt',
+        'winrt-Windows.Media.Ocr': 'winrt.windows.media.ocr'
     }
     missing_packages = []
     

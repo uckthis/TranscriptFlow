@@ -20,7 +20,7 @@ def setup_logging():
     log_file = os.path.join(logs_dir, 'transcriptflow.log')
     
     handlers = [
-        RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
+        RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
     ]
     
     # Only add StreamHandler if stdout exists (not in windowed mode)
@@ -96,6 +96,7 @@ from PyQt6.QtCore import Qt, QUrl, QTimer, QCoreApplication, QByteArray, QRegula
 from PyQt6.QtGui import (QAction, QIcon, QKeySequence, QActionGroup, QFont, QColor, 
                          QTextCharFormat, QFontDatabase, QTextCursor, QPixmap, QPainter, QLinearGradient, QBrush,
                          QDesktopServices, QPen, QGuiApplication, QTextOption)
+from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog, QPageSetupDialog
 
 # Set Application User Model ID for Windows Taskbar Icon stability
@@ -148,6 +149,26 @@ class ClickableSlider(QSlider):
             self.setValue(int(val))
             event.accept()
         super().mousePressEvent(event)
+
+class OCRThread(QThread):
+    finished = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, image_bytes, settings):
+        super().__init__()
+        self.image_bytes = image_bytes
+        self.settings = settings
+
+    def run(self):
+        try:
+            from ocr_engine import perform_ocr
+            text = perform_ocr(self.image_bytes, self.settings)
+            if text:
+                self.finished.emit(text)
+            else:
+                self.failed.emit("No text detected.")
+        except Exception as e:
+            self.failed.emit(str(e))
 
 class MainWindow(QMainWindow):
     def __init__(self, splash=None):
@@ -247,7 +268,14 @@ class MainWindow(QMainWindow):
                 'custom_themes': {},
                 'hidden_themes': []
             },
-            'recent_files': []
+            'recent_files': [],
+            'ocr': {
+                'copy_to_clipboard': True,
+                'insert_at_cursor': True,
+                'case_conversion': 'none',
+                'prefix': '',
+                'suffix': ''
+            }
         }
         
         self.find_dialog = None # Initialize Find & Replace dialog state
@@ -653,6 +681,9 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(slot)
             return btn
 
+        self.btn_ocr = create_util_btn("🎯 OCR", self.start_ocr_snip)
+        self.btn_ocr.setToolTip("Capture screen area for OCR (Ctrl+Shift+O)")
+
         self.btn_spell = create_util_btn("🔡 Spell Check", self.toggle_spell_check)
         self.btn_spell.setCheckable(True)
         self.btn_spell.setChecked(self.settings.get('spell_check', True))
@@ -663,6 +694,7 @@ class MainWindow(QMainWindow):
         self.btn_ribbon_offset = create_util_btn("⏳ Offset", self.set_media_offset)
         self.btn_settings = create_util_btn("⚙️ Settings", self.open_transcript_settings)
         
+        zone_c_layout.addWidget(self.btn_ocr)
         zone_c_layout.addWidget(self.btn_spell)
         zone_c_layout.addWidget(self.btn_adj_tc); zone_c_layout.addWidget(self.btn_ribbon_snippets)
         zone_c_layout.addWidget(self.btn_ribbon_shortcuts); zone_c_layout.addWidget(self.btn_ribbon_offset)
@@ -1720,6 +1752,8 @@ class MainWindow(QMainWindow):
         self.add_action_safe(edit_menu, "Find Previous", self.find_prev_silent, "Alt+F3")
         self.add_action_safe(edit_menu, "Change Case", self.editor.cycle_case, "Shift+F3")
         self.add_action_safe(edit_menu, "Replace...", self.replace_text, QKeySequence.StandardKey.Replace)
+        edit_menu.addSeparator()
+        self.add_action_safe(edit_menu, "OCR Snip", self.start_ocr_snip, "Ctrl+Shift+O")
         edit_menu.addSeparator()
         self.add_action_safe(edit_menu, "Set Up Foot Pedal...", self.setup_foot_pedal)
         self.add_action_safe(edit_menu, "Manage USB Devices...", self.manage_usb_devices)
@@ -3525,7 +3559,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "About TranscriptFlow Pro",
             "<h2>TranscriptFlow Pro</h2>"
-            "<p>Version 1.1.3</p>"
+            "<p>Version 1.1.2</p>"
             "<p>A professional transcription application.</p>"
             "<p><b>Features:</b></p>"
             "<ul>"
@@ -3787,6 +3821,58 @@ class MainWindow(QMainWindow):
         else:
             self.save_config()
             event.accept()
+
+    def start_ocr_snip(self):
+        """Initiate the Sniper Tool overlay"""
+        from dialogs import SniperTool
+        self.sniper = SniperTool()
+        self.sniper.snippetCaptured.connect(self.on_ocr_captured)
+        self.sniper.show()
+
+    def on_ocr_captured(self, pixmap):
+        """Process the captured pixmap and perform OCR in a thread"""
+        if pixmap.isNull():
+            return
+
+        # Convert QPixmap to bytes
+        from PyQt6.QtCore import QBuffer, QIODevice
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        pixmap.save(buffer, "PNG")
+        image_bytes = buffer.data().data()
+
+        ocr_settings = self.config.get('ocr', {
+            'copy_to_clipboard': True,
+            'insert_at_cursor': True,
+            'case_conversion': 'none',
+            'prefix': '',
+            'suffix': ''
+        })
+
+        self.statusBar().showMessage("Performing OCR...", 0)
+        
+        # Start Thread
+        self.ocr_thread = OCRThread(image_bytes, ocr_settings)
+        self.ocr_thread.finished.connect(self.on_ocr_success)
+        self.ocr_thread.failed.connect(self.on_ocr_failure)
+        self.ocr_thread.start()
+
+    def on_ocr_success(self, text):
+        self.statusBar().showMessage("OCR Complete.", 3000)
+        ocr_settings = self.config.get('ocr', {})
+        
+        # 1. Copy to clipboard
+        if ocr_settings.get('copy_to_clipboard', True):
+            QApplication.clipboard().setText(text)
+        
+        # 2. Insert at cursor
+        if ocr_settings.get('insert_at_cursor', True):
+            self.editor.insertPlainText(text)
+            self.editor.setFocus()
+
+    def on_ocr_failure(self, error):
+        self.statusBar().showMessage(f"OCR Failed: {error}", 3000)
+        logger.warning(f"OCR Thread Failed: {error}")
 
     def save_config(self):
         """Updates and persists the unified configuration"""

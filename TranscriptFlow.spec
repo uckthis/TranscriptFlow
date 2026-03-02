@@ -36,6 +36,11 @@ hiddenimports = [
     'pynput',
     'pynput.keyboard',
     'pynput.mouse',
+    'winrt.windows.media.ocr',
+    'winrt.windows.graphics.imaging',
+    'winrt.windows.storage.streams',
+    'winrt.windows.foundation',
+    'winrt.windows.foundation.collections',
 ]
 
 # Add all enchant submodules

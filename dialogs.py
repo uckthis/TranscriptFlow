@@ -4,8 +4,8 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                              QListWidgetItem, QInputDialog, QMessageBox, QProgressDialog,
                              QColorDialog, QTextEdit, QTextBrowser, QDoubleSpinBox, QSpinBox, 
                              QCheckBox, QFileDialog, QFrame, QFontComboBox,
-                             QGridLayout)
-from PyQt6.QtCore import Qt, QSize, QTimer, QRegularExpression
+                             QGridLayout, QRubberBand, QApplication)
+from PyQt6.QtCore import Qt, QSize, QTimer, QRegularExpression, QRect, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QKeyEvent, QColor, QFont, QFontDatabase, QTextCursor, QTextDocument
 import subprocess
 import re
@@ -2122,6 +2122,41 @@ class PreferencesDialog(QDialog):
         
         self.tabs.addTab(self.tab_general, "General")
         self.tabs.addTab(self.tab_newdoc, "New Document")
+
+        # --- TAB 3: OCR ---
+        self.tab_ocr = QWidget()
+        ocr_layout = QVBoxLayout(self.tab_ocr)
+        ocr_form = QFormLayout()
+        
+        ocr_conf = self.config.get('ocr', {})
+        self.ocr_clipboard = QCheckBox("Copy result to clipboard")
+        self.ocr_clipboard.setChecked(ocr_conf.get('copy_to_clipboard', True))
+        ocr_form.addRow("Output:", self.ocr_clipboard)
+        
+        self.ocr_insert = QCheckBox("Insert result at cursor position")
+        self.ocr_insert.setChecked(ocr_conf.get('insert_at_cursor', True))
+        ocr_form.addRow("", self.ocr_insert)
+        
+        self.ocr_case = QComboBox()
+        self.ocr_case.addItems(["No change", "UPPERCASE", "lowercase", "Title Case"])
+        case_map = {"none": 0, "upper": 1, "lower": 2, "title": 3}
+        self.ocr_case.setCurrentIndex(case_map.get(ocr_conf.get('case_conversion', 'none'), 0))
+        ocr_form.addRow("Case Change:", self.ocr_case)
+        
+        self.ocr_prefix = QLineEdit()
+        self.ocr_prefix.setPlaceholderText("e.g. [ ")
+        self.ocr_prefix.setText(ocr_conf.get('prefix', ''))
+        ocr_form.addRow("Add Prefix:", self.ocr_prefix)
+        
+        self.ocr_suffix = QLineEdit()
+        self.ocr_suffix.setPlaceholderText("e.g. ]: ")
+        self.ocr_suffix.setText(ocr_conf.get('suffix', ''))
+        ocr_form.addRow("Add Suffix:", self.ocr_suffix)
+        
+        ocr_layout.addLayout(ocr_form)
+        ocr_layout.addStretch()
+        self.tabs.addTab(self.tab_ocr, "OCR")
+
         layout.addWidget(self.tabs)
         
         # Bottom Buttons
@@ -2185,6 +2220,16 @@ class PreferencesDialog(QDialog):
         # Waveform retention
         wf_ret_map = {0: 0, 1: 1, 2: 3, 3: 6, 4: 12}
         self.config['waveform_retention_months'] = wf_ret_map.get(self.wf_retention.currentIndex(), 3)
+        
+        # OCR Settings
+        case_map = ["none", "upper", "lower", "title"]
+        self.config['ocr'] = {
+            'copy_to_clipboard': self.ocr_clipboard.isChecked(),
+            'insert_at_cursor': self.ocr_insert.isChecked(),
+            'case_conversion': case_map[self.ocr_case.currentIndex()],
+            'prefix': self.ocr_prefix.text(),
+            'suffix': self.ocr_suffix.text()
+        }
         
         return self.config
 
@@ -3098,3 +3143,56 @@ class SyncTranscriptDialog(QDialog):
         return {
             'scope': 'all' if self.opt_all.isChecked() else 'cursor'
         }
+
+# --- Sniper Tool Overlay ---
+class SniperTool(QWidget):
+    """A full-screen overlay for selecting a screen region for OCR."""
+    snippetCaptured = pyqtSignal(object) # Emit QPixmap of captured area
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(
+            Qt.WindowType.WindowStaysOnTopHint | 
+            Qt.WindowType.FramelessWindowHint | 
+            Qt.WindowType.X11BypassWindowManagerHint
+        )
+        self.setWindowOpacity(0.3)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setMouseTracking(True)
+        
+        # Start full screen on primary screen
+        screen = QApplication.primaryScreen().geometry()
+        self.setGeometry(screen)
+        
+        self.origin = None
+        self.rubberBand = QRubberBand(QRubberBand.Shape.Rectangle, self)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.origin = event.pos()
+            self.rubberBand.setGeometry(QRect(self.origin, QSize()))
+            self.rubberBand.show()
+
+    def mouseMoveEvent(self, event):
+        if self.origin:
+            self.rubberBand.setGeometry(QRect(self.origin, event.pos()).normalized())
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            rect = self.rubberBand.geometry()
+            self.rubberBand.hide()
+            self.hide()
+            
+            # Snap the region
+            screen = QApplication.primaryScreen()
+            # Map widget coordinates to global screen coordinates
+            global_origin = self.mapToGlobal(rect.topLeft())
+            global_rect = QRect(global_origin, rect.size())
+            
+            pixmap = screen.grabWindow(0, global_rect.x(), global_rect.y(), global_rect.width(), global_rect.height())
+            self.snippetCaptured.emit(pixmap)
+            self.close()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
