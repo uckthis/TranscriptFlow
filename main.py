@@ -3525,7 +3525,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "About TranscriptFlow Pro",
             "<h2>TranscriptFlow Pro</h2>"
-            "<p>Version 1.1.2</p>"
+            "<p>Version 1.1.3</p>"
             "<p>A professional transcription application.</p>"
             "<p><b>Features:</b></p>"
             "<ul>"

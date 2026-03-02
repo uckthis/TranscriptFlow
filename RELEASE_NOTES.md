@@ -1,3 +1,11 @@
+# TranscriptFlow Pro v1.1.3 - Transcription Efficiency Update
+
+This update refines the "Change Case" feature to favor transcription workflows and speaker identification.
+
+## 🔠 Refined Change Case (Shift+F3)
+- **UPPERCASE Priority**: Pressing `Shift+F3` on a speaker name (e.g., "Speaker:") now converts it to **UPPERCASE** on the very first press. This eliminates the extra toggles previously required for speaker identification.
+- **Refined Cycle**: The logic now intelligently detects Title/Sentence case and prioritizes the most likely desired state for transcribers.
+
 # TranscriptFlow Pro v1.1.2 - Format-Aware Search & Extreme Boost
 
 This update brings professional formatting support to Find & Replace and a massive volume boost for difficult recordings.
