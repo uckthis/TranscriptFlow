@@ -1,6 +1,10 @@
-# TranscriptFlow Pro v1.1.2 - Format-Aware Search & Extreme Boost
+This update brings a powerful new OCR tool to instantly capture text from your screen, along with professional formatting support for Find & Replace and a massive volume boost.
 
-This update brings professional formatting support to Find & Replace and a massive volume boost for difficult recordings.
+## 🎯 Sniper OCR Tool (New!)
+- **Instant Capture**: Use the new **🎯 OCR** button in the ribbon or press `Ctrl+Shift+O` to select any area on your screen and extract text instantly.
+- **Auto-Formatting**: Automatically convert captured text to UPPERCASE, lowercase, or Title Case.
+- **Smart Prefixes/Suffixes**: Add custom text like `": "` automatically to captured speaker names.
+- **Flexible Output**: Choose to copy to clipboard, insert at cursor, or both. Configure these in **Edit > Options... > OCR**.
 
 ## 🔍 Format-Aware Find & Replace
 - **Find Formatting**: You can now filter search results by formatting. Search for "text" only where it is **Bold** or *Italic*.
