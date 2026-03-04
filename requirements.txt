@@ -12,3 +12,6 @@ winrt-Windows.Graphics.Imaging
 winrt-Windows.Storage.Streams
 winrt-Windows.Foundation
 winrt-Windows.Foundation.Collections
+pytesseract
+Pillow
+requests

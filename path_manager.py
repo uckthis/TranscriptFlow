@@ -124,6 +124,55 @@ def get_config_path():
     return os.path.join(get_appdata_dir(), 'config.json')
 
 
+def get_bin_dir():
+    """Get the directory for external binaries (e.g. Tesseract)"""
+    bin_dir = os.path.join(get_appdata_dir(), 'bin')
+    if not os.path.exists(bin_dir):
+        os.makedirs(bin_dir, exist_ok=True)
+    return bin_dir
+
+
+def get_tesseract_dir():
+    """Get the directory where Tesseract is installed"""
+    tess_dir = os.path.join(get_bin_dir(), 'tesseract')
+    if not os.path.exists(tess_dir):
+        os.makedirs(tess_dir, exist_ok=True)
+    return tess_dir
+
+
+def get_tessdata_dir():
+    """Get the directory for Tesseract language data"""
+    tessdata_dir = os.path.join(get_tesseract_dir(), 'tessdata')
+    if not os.path.exists(tessdata_dir):
+        os.makedirs(tessdata_dir, exist_ok=True)
+    return tessdata_dir
+
+
+def get_tesseract_exe():
+    """Get the path to the Tesseract executable, checking multiple locations"""
+    # 1. Check app-specific bin directory (AppData)
+    app_tess = os.path.join(get_tesseract_dir(), 'tesseract.exe')
+    if os.path.exists(app_tess):
+        return app_tess
+        
+    # 2. Check standard system paths
+    system_paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"
+    ]
+    for p in system_paths:
+        if os.path.exists(p):
+            return p
+            
+    # 3. Fallback to just 'tesseract' and hope it's on PATH
+    import shutil
+    on_path = shutil.which("tesseract")
+    if on_path:
+        return on_path
+        
+    return app_tess # Default to expected app path if not found
+
+
 def get_resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
     if is_frozen():
@@ -144,6 +193,9 @@ def initialize_app_directories():
     get_backup_dir()
     get_waveform_cache_dir()
     get_logs_dir()
+    get_bin_dir()
+    get_tesseract_dir()
+    get_tessdata_dir()
     
     # Copy bundled config.json if it exists and AppData config doesn't
     appdata_config = get_config_path()

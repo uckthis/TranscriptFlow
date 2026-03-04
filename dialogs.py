@@ -11,6 +11,8 @@ import subprocess
 import re
 import os
 import shutil
+from ocr_engine import is_tesseract_installed, get_installed_tesseract_langs, TESS_LANG_MAP, get_lang_name, get_lang_code
+from ocr_downloader import download_tesseract, download_language
 
 # Configure enchant to use AppData dicts folder BEFORE importing enchant
 from path_manager import get_dicts_dir
@@ -99,11 +101,66 @@ class MediaSourceDialog(QDialog):
         if f:
             self.inp_file.setText(f)
 
-    def get_data(self):
-        idx = self.tabs.currentIndex()
-        if idx == 0: return 'file', self.inp_file.text()
-        if idx == 1: return 'url', self.inp_url.text()
-        if idx == 2: return 'offline', self.combo_mode.currentText()
+        return None, None
+
+# --- Language Selection Dialog ---
+class LanguageSelectionDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Language to Install")
+        self.resize(400, 500)
+        layout = QVBoxLayout(self)
+        
+        layout.addWidget(QLabel("Search Language:"))
+        self.search_inp = QLineEdit()
+        self.search_inp.setPlaceholderText("e.g. Spanish, Arabic...")
+        self.search_inp.textChanged.connect(self.filter_list)
+        layout.addWidget(self.search_inp)
+        
+        self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet("""
+            QListWidget {
+                background-color: #1e1e1e;
+                border: 1px solid #333;
+                border-radius: 8px;
+                color: #e0e0e0;
+                font-size: 13px;
+            }
+            QListWidget::item {
+                padding: 10px;
+                border-bottom: 1px solid #2a2a2a;
+            }
+            QListWidget::item:selected {
+                background-color: #0078d4;
+                color: white;
+                font-weight: bold;
+            }
+            QListWidget::item:hover {
+                background-color: #2d2d2d;
+            }
+        """)
+        
+        for code, name in sorted(TESS_LANG_MAP.items(), key=lambda x: x[1]):
+            if code == "osd": continue # Skip OSD in install list
+            item = QListWidgetItem(name)
+            item.setData(Qt.ItemDataRole.UserRole, code)
+            self.list_widget.addItem(item)
+        layout.addWidget(self.list_widget)
+        
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+        
+    def filter_list(self, text):
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            item.setHidden(text.lower() not in item.text().lower())
+            
+    def get_selected(self):
+        curr = self.list_widget.currentItem()
+        if curr:
+            return curr.data(Qt.ItemDataRole.UserRole), curr.text()
         return None, None
 
 # --- Key Capture Dialog ---
@@ -2129,6 +2186,39 @@ class PreferencesDialog(QDialog):
         ocr_form = QFormLayout()
         
         ocr_conf = self.config.get('ocr', {})
+        
+        # --- Engine Selection ---
+        self.ocr_engine = QComboBox()
+        self.ocr_engine.addItems(["Windows Native", "Tesseract"])
+        self.ocr_engine.setCurrentText("Windows Native" if ocr_conf.get('engine', 'windows') == 'windows' else "Tesseract")
+        self.ocr_engine.currentTextChanged.connect(self.update_ocr_ui_state)
+        ocr_form.addRow("OCR Engine:", self.ocr_engine)
+        
+        # --- Tesseract Management ---
+        self.tess_group = QWidget()
+        tess_layout = QVBoxLayout(self.tess_group)
+        tess_layout.setContentsMargins(0, 0, 0, 0)
+        
+        status_layout = QHBoxLayout()
+        self.tess_status = QLabel("Checking Tesseract...")
+        self.btn_install_tess = QPushButton("Automatic One-Click Install")
+        self.btn_install_tess.clicked.connect(self.start_tess_download)
+        status_layout.addWidget(self.tess_status)
+        status_layout.addWidget(self.btn_install_tess)
+        tess_layout.addLayout(status_layout)
+        
+        lang_layout = QHBoxLayout()
+        self.ocr_lang = QComboBox()
+        self.btn_add_lang = QPushButton("Install More Languages...")
+        self.btn_add_lang.clicked.connect(self.start_lang_install)
+        lang_layout.addWidget(QLabel("Language:"))
+        lang_layout.addWidget(self.ocr_lang)
+        lang_layout.addWidget(self.btn_add_lang)
+        tess_layout.addLayout(lang_layout)
+        
+        ocr_form.addRow("Tesseract Setup:", self.tess_group)
+        add_sep(ocr_form) # Using internal add_sep helper
+        
         self.ocr_clipboard = QCheckBox("Copy result to clipboard")
         self.ocr_clipboard.setChecked(ocr_conf.get('copy_to_clipboard', True))
         ocr_form.addRow("Output:", self.ocr_clipboard)
@@ -2153,9 +2243,26 @@ class PreferencesDialog(QDialog):
         self.ocr_suffix.setText(ocr_conf.get('suffix', ''))
         ocr_form.addRow("Add Suffix:", self.ocr_suffix)
         
+        self.ocr_shortcut = QLineEdit()
+        self.ocr_shortcut.setReadOnly(True)
+        self.ocr_shortcut.setPlaceholderText("e.g. Ctrl+Shift+O")
+        self.ocr_shortcut.setText(ocr_conf.get('shortcut', 'Ctrl+Shift+O'))
+        
+        ocr_sc_layout = QHBoxLayout()
+        ocr_sc_layout.addWidget(self.ocr_shortcut)
+        self.btn_define_ocr = QPushButton("Define")
+        self.btn_define_ocr.clicked.connect(self.define_ocr_shortcut)
+        ocr_sc_layout.addWidget(self.btn_define_ocr)
+        
+        ocr_form.addRow("Keyboard Shortcut:", ocr_sc_layout)
+        
         ocr_layout.addLayout(ocr_form)
         ocr_layout.addStretch()
         self.tabs.addTab(self.tab_ocr, "OCR")
+        
+        # Initial UI state
+        self.refresh_tess_ui()
+        self.update_ocr_ui_state()
 
         layout.addWidget(self.tabs)
         
@@ -2224,14 +2331,87 @@ class PreferencesDialog(QDialog):
         # OCR Settings
         case_map = ["none", "upper", "lower", "title"]
         self.config['ocr'] = {
+            'engine': 'windows' if self.ocr_engine.currentIndex() == 0 else 'tesseract',
+            'tesseract_lang': self.ocr_lang.currentData(),
             'copy_to_clipboard': self.ocr_clipboard.isChecked(),
             'insert_at_cursor': self.ocr_insert.isChecked(),
             'case_conversion': case_map[self.ocr_case.currentIndex()],
             'prefix': self.ocr_prefix.text(),
-            'suffix': self.ocr_suffix.text()
+            'suffix': self.ocr_suffix.text(),
+            'shortcut': self.ocr_shortcut.text()
         }
         
         return self.config
+
+    def update_ocr_ui_state(self):
+        is_tess = self.ocr_engine.currentIndex() == 1
+        self.tess_group.setVisible(is_tess)
+
+    def refresh_tess_ui(self):
+        installed = is_tesseract_installed()
+        if installed:
+            self.tess_status.setText("✅ Tesseract Engine Installed")
+            self.btn_install_tess.hide()
+            self.ocr_lang.setEnabled(True)
+            self.btn_add_lang.setEnabled(True)
+            
+            # Populate languages
+            langs = get_installed_tesseract_langs()
+            self.ocr_lang.clear()
+            for code in langs:
+                self.ocr_lang.addItem(get_lang_name(code), code)
+            
+            saved_lang = self.config.get('ocr', {}).get('tesseract_lang', 'eng')
+            idx = self.ocr_lang.findData(saved_lang)
+            if idx >= 0:
+                self.ocr_lang.setCurrentIndex(idx)
+        else:
+            self.tess_status.setText("❌ Tesseract Engine Not Found")
+            self.btn_install_tess.show()
+            self.ocr_lang.setEnabled(False)
+            self.btn_add_lang.setEnabled(False)
+
+    def start_tess_download(self):
+        self.prog = QProgressDialog("Downloading Tesseract Binary...", "Cancel", 0, 100, self)
+        self.prog.setWindowTitle("OCR Setup")
+        self.prog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.prog.show()
+        
+        def on_prog(p, msg): self.prog.setValue(p); self.prog.setLabelText(msg)
+        def on_finished(ok, msg):
+            self.prog.close()
+            if ok:
+                QMessageBox.information(self, "OCR Setup", "Tesseract engine installed successfully!")
+                self.refresh_tess_ui()
+            else:
+                QMessageBox.warning(self, "OCR Setup", f"Failed to install Tesseract: {msg}")
+        
+        self._dl_thread = download_tesseract(on_finished, on_prog)
+
+    def start_lang_install(self):
+        dlg = LanguageSelectionDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            lang_code, lang_name = dlg.get_selected()
+            if lang_code:
+                self.prog = QProgressDialog(f"Downloading language: {lang_name}...", "Cancel", 0, 100, self)
+                self.prog.show()
+                
+                def on_prog(p, msg): self.prog.setValue(p)
+                def on_finished(ok, msg):
+                    self.prog.close()
+                    if ok:
+                        QMessageBox.information(self, "OCR Setup", f"Language '{lang_name}' installed!")
+                        self.refresh_tess_ui()
+                    else:
+                        QMessageBox.warning(self, "OCR Setup", f"Failed to download language: {msg}")
+                
+                self._dl_thread = download_language(lang_code, on_finished, on_prog)
+
+    def define_ocr_shortcut(self):
+        """Open the key capture dialog for the OCR shortcut"""
+        dlg = KeyCaptureDialog(self)
+        if dlg.exec() and dlg.captured_key:
+            self.ocr_shortcut.setText(dlg.captured_key)
 
 from hardware import USBManager
 

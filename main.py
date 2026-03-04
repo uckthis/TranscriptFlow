@@ -270,11 +270,14 @@ class MainWindow(QMainWindow):
             },
             'recent_files': [],
             'ocr': {
+                'engine': 'windows',
+                'tesseract_lang': 'eng',
                 'copy_to_clipboard': True,
                 'insert_at_cursor': True,
                 'case_conversion': 'none',
                 'prefix': '',
-                'suffix': ''
+                'suffix': '',
+                'shortcut': 'Ctrl+Shift+O'
             }
         }
         
@@ -312,6 +315,7 @@ class MainWindow(QMainWindow):
         
         # --- UI Setup ---
         self.init_ui()
+        self.init_ocr_shortcut()
         self.init_menus()
         
         # Delayed/Safe Initialization
@@ -1753,7 +1757,6 @@ class MainWindow(QMainWindow):
         self.add_action_safe(edit_menu, "Change Case", self.editor.cycle_case, "Shift+F3")
         self.add_action_safe(edit_menu, "Replace...", self.replace_text, QKeySequence.StandardKey.Replace)
         edit_menu.addSeparator()
-        self.add_action_safe(edit_menu, "OCR Snip", self.start_ocr_snip, "Ctrl+Shift+O")
         edit_menu.addSeparator()
         self.add_action_safe(edit_menu, "Set Up Foot Pedal...", self.setup_foot_pedal)
         self.add_action_safe(edit_menu, "Manage USB Devices...", self.manage_usb_devices)
@@ -2869,6 +2872,9 @@ class MainWindow(QMainWindow):
             # Re-initialize last_autosave_time to respect new interval
             self.last_autosave_time = datetime.datetime.now()
             
+            # Update OCR Shortcut
+            self.init_ocr_shortcut()
+            
             self.save_config()
             self.statusBar().showMessage("Preferences updated and saved", 2000)
 
@@ -3822,6 +3828,17 @@ class MainWindow(QMainWindow):
             self.save_config()
             event.accept()
 
+    def init_ocr_shortcut(self):
+        """Initialize or update the global OCR shortcut action"""
+        if not hasattr(self, 'ocr_act'):
+            self.ocr_act = QAction("OCR", self)
+            self.ocr_act.triggered.connect(self.start_ocr_snip)
+            self.addAction(self.ocr_act)
+            
+        ocr_conf = self.config.get('ocr', {})
+        shortcut = ocr_conf.get('shortcut', 'Ctrl+Shift+O')
+        self.ocr_act.setShortcut(QKeySequence(shortcut))
+
     def start_ocr_snip(self):
         """Initiate the Sniper Tool overlay"""
         from dialogs import SniperTool
@@ -3842,11 +3859,14 @@ class MainWindow(QMainWindow):
         image_bytes = buffer.data().data()
 
         ocr_settings = self.config.get('ocr', {
+            'engine': 'windows',
+            'tesseract_lang': 'eng',
             'copy_to_clipboard': True,
             'insert_at_cursor': True,
             'case_conversion': 'none',
             'prefix': '',
-            'suffix': ''
+            'suffix': '',
+            'shortcut': 'Ctrl+Shift+O'
         })
 
         self.statusBar().showMessage("Performing OCR...", 0)

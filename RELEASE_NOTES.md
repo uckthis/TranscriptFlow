@@ -1,3 +1,26 @@
+# Release v1.1.4 (Professional OCR Update)
+
+This update supercharges the OCR engine with multi-engine support, automated installation, and a much cleaner interface for managing languages.
+
+## 🌍 Multi-Engine & Automated OCR
+- **Windows + Tesseract**: Now supports both Windows Native OCR (fast) and Tesseract OCR (high precision/multi-language).
+- **One-Click Install**: Tesseract engine can now be installed automatically with one click from the Preferences dialog.
+- **Friendly Language Names**: Technical codes like `ara` and `spa` have been replaced with human-readable names like `Arabic` and `Spanish`.
+- **Searchable Language Catalog**: Search and install from dozens of supported Tesseract languages through a new selection dialog.
+
+## 🎨 UI & UX Refinement
+- **High-Contrast Selection**: Overhauled the language selection list with a high-contrast style to ensure text is always visible.
+- **Improved Settings**: Renamed ambiguous "osd" model to "Orientation & Script Detection" for better clarity.
+- **RTL Stability**: Further refinements to Urdu (RTL) alignment and font persistence.
+
+## 🛠️ Fixes & Under-the-Hood
+- **Enhanced Tesseract Pathing**: Improved binary discovery for different Windows configurations.
+- **Resource Management**: Optimized loading of OCR drivers to reduce startup latency.
+
+---
+
+# Release v1.1.2 (Sniper OCR Update)
+
 This update brings a powerful new OCR tool to instantly capture text from your screen, along with professional formatting support for Find & Replace and a massive volume boost.
 
 ## 🎯 Sniper OCR Tool (New!)

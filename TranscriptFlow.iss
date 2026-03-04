@@ -3,7 +3,7 @@
 ; Supports both x86 and x64 architectures with automatic detection
 
 #define MyAppName "TranscriptFlow Pro"
-#define MyAppVersion "1.1.2"
+#define MyAppVersion "1.1.4"
 #define MyAppPublisher "TranscriptFlow"
 #define MyAppURL "https://transcriptflow.com"
 #define MyAppExeName "TranscriptFlow.exe"
