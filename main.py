@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
             self.splash.showMessage("Loading settings...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignCenter, QColor("white"))
         
         super().__init__()
-        self.setWindowTitle("TranscriptFlow Pro")
+        self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION}")
         self.resize(1400, 900)
         self.current_file_path = None
         self.current_media_path = None # Initialize media path
@@ -2407,7 +2407,7 @@ class MainWindow(QMainWindow):
                 return
         self.editor.clear()
         self.current_file_path = None
-        self.setWindowTitle("TranscriptFlow Pro - Untitled")
+        self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - Untitled")
         self.is_dirty = False
         self.editor.document().setModified(False)
         
@@ -2432,7 +2432,7 @@ class MainWindow(QMainWindow):
                 if data:
                     self.restore_state(data)
                     self.current_file_path = f
-                    self.setWindowTitle(f"TranscriptFlow Pro - {os.path.basename(f)}")
+                    self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(f)}")
             else:
                 with open(f, 'r', encoding='utf-8') as file:
                     content = file.read()
@@ -2441,7 +2441,7 @@ class MainWindow(QMainWindow):
                     else:
                         self.editor.setPlainText(content)
                 self.current_file_path = f
-                self.setWindowTitle(f"TranscriptFlow Pro - {os.path.basename(f)}")
+                self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(f)}")
             
             # Reset modified flag after load
             self.is_dirty = False
@@ -2460,7 +2460,7 @@ class MainWindow(QMainWindow):
                 if data:
                     self.restore_state(data)
                     self.current_file_path = f
-                    self.setWindowTitle(f"TranscriptFlow Pro - {os.path.basename(f)}")
+                    self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(f)}")
                     self.update_recent_files(f)
                     self.is_dirty = False
                     self.editor.document().setModified(False)
@@ -2525,7 +2525,7 @@ class MainWindow(QMainWindow):
         if data:
             self.restore_state(data)
             self.current_file_path = path
-            self.setWindowTitle(f"TranscriptFlow Pro - {os.path.basename(path)}")
+            self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(path)}")
             self.update_recent_files(path)
             self.is_dirty = False
             self.editor.document().setModified(False)
@@ -2587,7 +2587,7 @@ class MainWindow(QMainWindow):
             self.save_config()
             self.current_file_path = f
             self.save_doc()
-            self.setWindowTitle(f"TranscriptFlow Pro - {os.path.basename(f)}")
+            self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(f)}")
 
     def reload_media(self):
         if hasattr(self, 'current_media_path') and self.current_media_path:
@@ -3367,7 +3367,7 @@ class MainWindow(QMainWindow):
                     if reply == QMessageBox.StandardButton.Yes:
                         self.restore_state(data)
                         self.current_file_path = None 
-                        self.setWindowTitle("TranscriptFlow Pro - Restored Backup")
+                        self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - Restored Backup")
                         self.statusBar().showMessage("Backup restored successfully", 3000)
 
     def capture_state(self):
@@ -3565,7 +3565,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "About TranscriptFlow Pro",
             "<h2>TranscriptFlow Pro</h2>"
-            "<p>Version 1.1.2</p>"
+            f"<p>Version {constants.APP_VERSION}</p>"
             "<p>A professional transcription application.</p>"
             "<p><b>Features:</b></p>"
             "<ul>"

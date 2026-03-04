@@ -3,6 +3,9 @@ TranscriptFlow Constants
 Centralized configuration for magic numbers and application defaults.
 """
 
+# Application Info
+APP_VERSION = "1.1.5"
+
 # Timecode & Formatting
 DEFAULT_FPS = 23.976
 WAVEFORM_SAMPLE_RATE = 400
