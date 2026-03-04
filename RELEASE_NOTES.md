@@ -1,3 +1,13 @@
+# Release v1.1.5 (Hotfix: OCR Dependencies)
+
+This is a critical hotfix to resolve the "ModuleNotFoundError: No module named 'PIL'" error encountered in v1.1.4.
+
+## 🛠️ Fixes
+- **Bundled Dependencies**: Fixed a build configuration issue where `PIL` (Pillow) and `pytesseract` were not correctly bundled in the final installer.
+- **Improved OCR Stability**: Verified all OCR core dependencies are included in the frozen environment.
+
+---
+
 # Release v1.1.4 (Professional OCR Update)
 
 This update supercharges the OCR engine with multi-engine support, automated installation, and a much cleaner interface for managing languages.

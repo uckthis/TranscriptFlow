@@ -41,6 +41,8 @@ hiddenimports = [
     'winrt.windows.storage.streams',
     'winrt.windows.foundation',
     'winrt.windows.foundation.collections',
+    'pytesseract',
+    'PIL',
 ]
 
 # Add all enchant submodules
@@ -90,7 +92,6 @@ a = Analysis(
         'matplotlib',
         'scipy',
         'pandas',
-        'PIL',
         'tkinter',
     ],
     win_no_prefer_redirects=False,
