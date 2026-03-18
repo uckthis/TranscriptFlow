@@ -197,6 +197,25 @@ def perform_ocr(image_bytes, settings):
 def is_tesseract_installed():
     return TesseractDriver().is_installed()
 
+def get_tesseract_version():
+    """
+    Returns the version string of the installed Tesseract engine.
+    """
+    if not TESSERACT_AVAILABLE:
+        return "Not Available (pytesseract missing)"
+        
+    exe_path = get_tesseract_exe()
+    if not os.path.exists(exe_path):
+        return "Not Found"
+        
+    try:
+        pytesseract.pytesseract.tesseract_cmd = exe_path
+        version = pytesseract.get_tesseract_version()
+        return str(version)
+    except Exception as e:
+        logger.error(f"Error getting Tesseract version: {e}")
+        return "Unknown"
+
 def get_installed_tesseract_langs():
     langs = set()
     

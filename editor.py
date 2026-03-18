@@ -554,20 +554,33 @@ class TranscriptEditor(QTextEdit):
             word = cursor.selectedText().strip()
             
             if word and not self.highlighter.dict.check(word):
-                # Add suggestions to top of menu
+                # We insert in reverse order so the last one inserted ends up at the top
+                menu.insertSeparator(menu.actions()[0])
+                
+                # 3. Add to Dictionary
+                add_act = QAction(f"Add '{word}' to Dictionary", self)
+                add_act.triggered.connect(lambda checked, w=word: self.add_to_dictionary(w))
+                menu.insertAction(menu.actions()[0], add_act)
+
+                # 2. Ignore All (current session)
+                ignore_act = QAction(f"Ignore All ('{word}')", self)
+                ignore_act.triggered.connect(lambda checked, w=word: self.add_to_skip_list(w))
+                menu.insertAction(menu.actions()[0], ignore_act)
+                
+                menu.insertSeparator(menu.actions()[0])
+
+                # 1. Suggestions
                 suggestions = self.highlighter.dict.suggest(word)
                 if suggestions:
                     suggestion_list = suggestions[:5] # Top 5
-                    
-                    menu.insertSeparator(menu.actions()[0])
                     for s in reversed(suggestion_list):
                         act = QAction(s, self)
                         act.triggered.connect(lambda checked, replacement=s, c=cursor: self.replace_word(c, replacement))
                         menu.insertAction(menu.actions()[0], act)
-                    
-                    header_act = QAction(f"Enchant: '{word}'", self)
-                    header_act.setEnabled(False)
-                    menu.insertAction(menu.actions()[0], header_act)
+                
+                header_act = QAction(f"Spelling: '{word}'", self)
+                header_act.setEnabled(False)
+                menu.insertAction(menu.actions()[0], header_act)
         
         menu.exec(event.globalPos())
 
@@ -641,6 +654,14 @@ class TranscriptEditor(QTextEdit):
         if word.lower() in self.highlighter.skip_list:
             self.highlighter.skip_list.remove(word.lower())
             self.highlighter.rehighlight()
+
+    def add_to_dictionary(self, word):
+        """Permanently add word to custom dictionary"""
+        try:
+            self.highlighter.dict.add(word)
+            self.highlighter.rehighlight()
+        except Exception as e:
+            print(f"Error adding to dictionary: {e}")
 
     def remove_from_dictionary(self, word):
         """Remove word from user dictionary (if possible)"""

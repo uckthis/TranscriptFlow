@@ -11,7 +11,8 @@ import subprocess
 import re
 import os
 import shutil
-from ocr_engine import is_tesseract_installed, get_installed_tesseract_langs, TESS_LANG_MAP, get_lang_name, get_lang_code
+from ocr_engine import (is_tesseract_installed, get_installed_tesseract_langs, 
+                        TESS_LANG_MAP, get_lang_name, get_lang_code, get_tesseract_version)
 from ocr_downloader import download_tesseract, download_language
 
 # Configure enchant to use AppData dicts folder BEFORE importing enchant
@@ -2350,7 +2351,8 @@ class PreferencesDialog(QDialog):
     def refresh_tess_ui(self):
         installed = is_tesseract_installed()
         if installed:
-            self.tess_status.setText("✅ Tesseract Engine Installed")
+            version = get_tesseract_version()
+            self.tess_status.setText(f"✅ Tesseract Engine Installed ({version})")
             self.btn_install_tess.hide()
             self.ocr_lang.setEnabled(True)
             self.btn_add_lang.setEnabled(True)

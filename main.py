@@ -686,7 +686,7 @@ class MainWindow(QMainWindow):
             return btn
 
         self.btn_ocr = create_util_btn("🎯 OCR", self.start_ocr_snip)
-        self.btn_ocr.setToolTip("Capture screen area for OCR (Ctrl+Shift+O)")
+        self.btn_ocr.setToolTip("Capture screen area for OCR")
 
         self.btn_spell = create_util_btn("🔡 Spell Check", self.toggle_spell_check)
         self.btn_spell.setCheckable(True)
@@ -1134,8 +1134,9 @@ class MainWindow(QMainWindow):
             }}
             
             QListWidget::item {{
-                padding: 5px;
+                padding: 10px;
                 color: black;
+                border-bottom: 1px solid {theme['border']};
             }}
             
             QListWidget::item:selected {{
