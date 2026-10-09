@@ -3,6 +3,8 @@
 TranscriptFlow Pro is a professional transcription application designed for speed, accuracy, and a seamless user experience. It features a high-performance media engine, a rich-text editor with timecode integration, and a dynamic waveform display.
 
 ![TranscriptFlow Splash](splash.png)
+<img width="3840" height="2036" alt="1" src="https://github.com/user-attachments/assets/99cb5252-cfd7-4fba-9f1a-d867ac123536" />
+
 
 ## Features
 
