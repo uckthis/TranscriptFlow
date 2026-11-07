@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                              QListWidgetItem, QInputDialog, QMessageBox, QProgressDialog,
                              QColorDialog, QTextEdit, QTextBrowser, QDoubleSpinBox, QSpinBox, 
                              QCheckBox, QFileDialog, QFrame, QFontComboBox,
-                             QGridLayout, QRubberBand, QApplication)
+                             QGridLayout, QRubberBand, QApplication, QStyledItemDelegate)
 from PyQt6.QtCore import Qt, QSize, QTimer, QRegularExpression, QRect, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QKeyEvent, QColor, QFont, QFontDatabase, QTextCursor, QTextDocument
 import subprocess
@@ -275,6 +275,21 @@ class KeyCaptureDialog(QDialog):
         """)
         self.ok_btn.setEnabled(False)
 
+class ListPaddingDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None, padding=10):
+        super().__init__(parent)
+        self.padding = padding
+
+    def sizeHint(self, option, index):
+        sh = super().sizeHint(option, index)
+        text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        num_lines = text.count('\n') + 1
+        fm = option.fontMetrics
+        line_height = fm.lineSpacing()
+        needed_height = line_height * num_lines + (self.padding * 2)
+        sh.setHeight(max(sh.height(), needed_height))
+        return sh
+
 # --- Snippets Manager with Variable Dropdown ---
 class SnippetsManagerDialog(QDialog):
     def __init__(self, parent=None, snippets=None):
@@ -291,6 +306,7 @@ class SnippetsManagerDialog(QDialog):
         left_layout.addWidget(QLabel("Snippets"))
         
         self.list_widget = QListWidget()
+        self.list_widget.setItemDelegate(ListPaddingDelegate(self.list_widget, padding=10))
         self.list_widget.currentItemChanged.connect(self.on_selected)
         left_layout.addWidget(self.list_widget)
         
@@ -758,6 +774,7 @@ class ShortcutsManagerDialog(QDialog):
         left = QVBoxLayout()
         left.addWidget(QLabel("Shortcuts"))
         self.list_w = QListWidget()
+        self.list_w.setItemDelegate(ListPaddingDelegate(self.list_w, padding=10))
         self.list_w.currentItemChanged.connect(self.on_sel)
         left.addWidget(self.list_w)
         
@@ -1063,7 +1080,7 @@ class TranscriptSettingsWidget(QWidget):
         
         self.size_spin = QSpinBox()
         self.size_spin.setRange(8, 72)
-        self.size_spin.setValue(int(self.settings.get('size', 12)))
+        self.size_spin.setValue(int(self.settings.get('size', 14)))
         font_layout.addRow("Size:", self.size_spin)
         layout.addLayout(font_layout)
         
@@ -1197,7 +1214,7 @@ class TranscriptSettingsWidget(QWidget):
     def use_defaults(self):
         if not self.defaults: return
         self.font_combo.setCurrentFont(QFont(self.defaults.get('font', 'Tahoma')))
-        self.size_spin.setValue(self.defaults.get('size', 12))
+        self.size_spin.setValue(self.defaults.get('size', 14))
         df_fps = self.defaults.get('fps', 23.976)
         for i in range(self.fps_combo.count()):
             m = re.search(r'(\d+\.?\d*)', self.fps_combo.itemText(i))
@@ -1841,9 +1858,29 @@ class FindReplaceDialog(QDialog):
         bold_req = self.cb_find_bold.isChecked()
         italic_req = self.cb_find_italic.isChecked()
         
-        bold_ok = not bold_req or fmt.fontWeight() == QFont.Weight.Bold
+        bold_ok = not bold_req or fmt.fontWeight() >= QFont.Weight.Bold.value
         italic_ok = not italic_req or fmt.fontItalic()
         return bold_ok and italic_ok
+
+    def _is_selection_match(self, cursor):
+        if not cursor.hasSelection():
+            return False
+        search_text = self.find_input.text()
+        if not search_text:
+            return False
+        sel_text = cursor.selectedText()
+        if self.cb_regex.isChecked():
+            regex_options = QRegularExpression.PatternOption.NoPatternOption
+            if not self.cb_case.isChecked():
+                regex_options |= QRegularExpression.PatternOption.CaseInsensitiveOption
+            regex = QRegularExpression(search_text, regex_options)
+            match = regex.match(sel_text)
+            return match.hasMatch() and match.capturedLength() == len(sel_text)
+        else:
+            if self.cb_case.isChecked():
+                return sel_text == search_text
+            else:
+                return sel_text.lower() == search_text.lower()
 
     def _apply_replace_format(self, cursor):
         # We only apply if at least one checkbox is checked
@@ -1855,10 +1892,13 @@ class FindReplaceDialog(QDialog):
                 fmt.setFontItalic(True)
             cursor.setCharFormat(fmt)
 
-    def find_next(self, quiet=False):
+    def find_next(self, quiet=False, wrap=None):
         search_text = self.find_input.text()
         if not search_text:
             return False
+            
+        if wrap is None:
+            wrap = self.cb_wrap.isChecked()
             
         flags = self.get_flags()
         wrapped = False
@@ -1881,7 +1921,7 @@ class FindReplaceDialog(QDialog):
                 if wrapped and self.editor.textCursor().position() >= initial_pos:
                     break 
             else:
-                if not wrapped and self.cb_wrap.isChecked():
+                if not wrapped and wrap:
                     wrapped = True
                     cursor = self.editor.textCursor()
                     cursor.movePosition(QTextCursor.MoveOperation.Start)
@@ -1894,10 +1934,13 @@ class FindReplaceDialog(QDialog):
             QMessageBox.information(self, "Find", f"'{search_text}' with specified formatting not found.")
         return False
 
-    def find_previous(self, quiet=False):
+    def find_previous(self, quiet=False, wrap=None):
         search_text = self.find_input.text()
         if not search_text:
             return False
+            
+        if wrap is None:
+            wrap = self.cb_wrap.isChecked()
             
         flags = self.get_flags() | QTextDocument.FindFlag.FindBackward
         wrapped = False
@@ -1919,7 +1962,7 @@ class FindReplaceDialog(QDialog):
                 if wrapped and self.editor.textCursor().position() <= initial_pos:
                     break
             else:
-                if not wrapped and self.cb_wrap.isChecked():
+                if not wrapped and wrap:
                     wrapped = True
                     cursor = self.editor.textCursor()
                     cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -1935,24 +1978,26 @@ class FindReplaceDialog(QDialog):
     def replace(self):
         cursor = self.editor.textCursor()
         # Ensure we have a valid format-matching selection
-        if not cursor.hasSelection() or cursor.selectedText() != self.find_input.text() or not self._check_format_match(cursor):
+        if not self._is_selection_match(cursor) or not self._check_format_match(cursor):
             if not self.find_next(quiet=True):
                 return
             cursor = self.editor.textCursor()
             
         cursor.beginEditBlock()
         new_text = self.replace_input.text()
+        start_pos = min(cursor.position(), cursor.anchor())
         cursor.insertText(new_text)
+        end_pos = cursor.position()
         
         # Apply formatting to replacement if needed
-        if len(new_text) > 0:
-            # Re-select the inserted text
-            cursor.setPosition(cursor.position() - len(new_text), QTextCursor.MoveMode.KeepAnchor)
-            self._apply_replace_format(cursor)
-            # Deselect so find_next continues from the end of replacement
-            cursor.clearSelection()
-            self.editor.setTextCursor(cursor)
+        if len(new_text) > 0 and (self.cb_replace_bold.isChecked() or self.cb_replace_italic.isChecked()):
+            fmt_cursor = QTextCursor(cursor)
+            fmt_cursor.setPosition(start_pos)
+            fmt_cursor.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+            self._apply_replace_format(fmt_cursor)
             
+        cursor.setPosition(end_pos)
+        self.editor.setTextCursor(cursor)
         cursor.endEditBlock()
         self.find_next(quiet=True)
 
@@ -1970,19 +2015,35 @@ class FindReplaceDialog(QDialog):
         self.editor.setUpdatesEnabled(False)
         cursor.beginEditBlock()
         
-        while self.find_next(quiet=True):
-            count += 1
-            inner_cursor = self.editor.textCursor()
-            new_text = self.replace_input.text()
-            inner_cursor.insertText(new_text)
-            if len(new_text) > 0:
-                inner_cursor.setPosition(inner_cursor.position() - len(new_text), QTextCursor.MoveMode.KeepAnchor)
-                self._apply_replace_format(inner_cursor)
-                inner_cursor.clearSelection()
+        try:
+            last_pos = -1
+            while self.find_next(quiet=True, wrap=False):
+                inner_cursor = self.editor.textCursor()
+                curr_pos = inner_cursor.position()
+                if curr_pos <= last_pos:
+                    inner_cursor.movePosition(QTextCursor.MoveOperation.NextCharacter)
+                    self.editor.setTextCursor(inner_cursor)
+                    continue
+
+                count += 1
+                new_text = self.replace_input.text()
+                start_pos = min(inner_cursor.position(), inner_cursor.anchor())
+                inner_cursor.insertText(new_text)
+                end_pos = inner_cursor.position()
+                
+                if len(new_text) > 0 and (self.cb_replace_bold.isChecked() or self.cb_replace_italic.isChecked()):
+                    fmt_cursor = QTextCursor(inner_cursor)
+                    fmt_cursor.setPosition(start_pos)
+                    fmt_cursor.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+                    self._apply_replace_format(fmt_cursor)
+                    
+                inner_cursor.setPosition(end_pos)
                 self.editor.setTextCursor(inner_cursor)
-        
-        cursor.endEditBlock()
-        self.editor.setUpdatesEnabled(True)
+                last_pos = end_pos
+        finally:
+            cursor.endEditBlock()
+            self.editor.setUpdatesEnabled(True)
+            
         QMessageBox.information(self, "Replace All", f"Replaced {count} occurrences.")
 
 class PreferencesDialog(QDialog):

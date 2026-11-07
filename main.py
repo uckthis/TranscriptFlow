@@ -2823,7 +2823,7 @@ class MainWindow(QMainWindow):
     def open_transcript_settings(self):
         # Default settings for "Use Defaults" button
         app_defaults = {
-            'font': 'Tahoma', 'size': 12, 'fps': 23.976,
+            'font': 'Tahoma', 'size': 14, 'fps': 23.976,
             'timecode_format': '[00:01:23.29]', 'omit_frames': False,
             'media_offset': 0, 'timecode_color': 'green',
             'font_color': 'black',
@@ -2837,16 +2837,20 @@ class MainWindow(QMainWindow):
             self.editor.settings = self.settings
             self.editor.update_font()
             self.update_tc_helper()
-            # Sync ribbon controls
+            # Sync ribbon controls with signals blocked so they don't fire formatting overrides
+            self.font_combo.blockSignals(True)
+            self.size_combo.blockSignals(True)
             self.font_combo.setCurrentFont(QFont(self.settings.get('font', 'Tahoma')))
-            self.size_combo.setCurrentText(str(self.settings.get('size', 12)))
+            self.size_combo.setCurrentText(str(self.settings.get('size', 14)))
+            self.font_combo.blockSignals(False)
+            self.size_combo.blockSignals(False)
             self.save_config()
             self.statusBar().showMessage("Transcript settings updated and saved", 2000)
 
     def open_options(self):
         # Default settings for "Use Defaults" button
         app_defaults = {
-            'font': 'Tahoma', 'size': 12, 'fps': 23.976,
+            'font': 'Tahoma', 'size': 14, 'fps': 23.976,
             'timecode_format': '[00:01:23.29]', 'omit_frames': False,
             'media_offset': 0, 'timecode_color': 'green',
             'font_color': 'black',
@@ -2865,6 +2869,12 @@ class MainWindow(QMainWindow):
             self.editor.settings = self.settings
             self.editor.update_font()
             self.update_tc_helper()
+            self.font_combo.blockSignals(True)
+            self.size_combo.blockSignals(True)
+            self.font_combo.setCurrentFont(QFont(self.settings.get('font', 'Tahoma')))
+            self.size_combo.setCurrentText(str(self.settings.get('size', 14)))
+            self.font_combo.blockSignals(False)
+            self.size_combo.blockSignals(False)
             self.apply_player_scaling()
             
             # Pitch Lock

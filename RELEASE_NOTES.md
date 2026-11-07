@@ -1,3 +1,17 @@
+# Release v1.1.6 (Stability & UI Overlap Fixes)
+
+This release addresses UI item layout in management dialogs, prevents formatting loss during settings changes, and fixes application freezes during bulk Replace All operations.
+
+## 🎨 UI & Dialog Improvements
+- **Snippet & Shortcut Item Layout**: Resolved vertical overlap of list entries in the Snippets and Shortcuts dialogs by dynamically calculating row heights to accommodate multiline snippets and stylesheet padding.
+
+## 🛠️ Formatting & Stability Fixes
+- **Preserve Formatting on Settings Update**: Fixed an issue where changing frame rate or transcript settings while text was selected would inadvertently strip font colors, bold, and italic styles from the selection.
+- **Find & Replace All Infinite Loop Fix**: Fixed a hang during Replace All operations when replacing text with strings sharing identical prefixes (e.g. `"MATT BAKER:"` with `"MATT BAKER:  "`).
+- **Non-Destructive Ribbon Formatting**: Updating font family or font size from the ribbon now merges attributes rather than replacing character format, keeping custom text colors and bold/italic styles intact.
+
+---
+
 # Release v1.1.5 (Hotfix: OCR Dependencies)
 
 This is a critical hotfix to resolve the "ModuleNotFoundError: No module named 'PIL'" error encountered in v1.1.4.

@@ -105,10 +105,17 @@ class TranscriptEditor(QTextEdit):
     def update_font(self):
         font_name = self.settings.get('font', 'Tahoma')
         font_size = int(self.settings.get('size', 14))
-        color = self.settings.get('font_color', 'black')
         
-        self.setFont(QFont(font_name, font_size))
-        self.setCurrentCharFormat(self.get_default_format())
+        font = QFont(font_name, font_size)
+        self.setFont(font)
+        self.document().setDefaultFont(font)
+        
+        # CRITICAL: Never apply default format to an active selection!
+        # In Qt, setCurrentCharFormat directly overrides the format of any selected text,
+        # which would strip colors, bold, and italics from the selection.
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            self.setCurrentCharFormat(self.get_default_format())
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
@@ -448,23 +455,23 @@ class TranscriptEditor(QTextEdit):
 
     def set_text_color(self, color):
         self.settings['font_color'] = color
-        fmt = self.currentCharFormat()
+        fmt = QTextCharFormat()
         fmt.setForeground(QColor(color))
-        self.setCurrentCharFormat(fmt)
+        self.mergeCurrentCharFormat(fmt)
         self.settingsChanged.emit(self.settings)
 
     def set_font_family(self, font_name):
         self.settings['font'] = font_name
-        fmt = self.currentCharFormat()
+        fmt = QTextCharFormat()
         fmt.setFontFamilies([font_name])
-        self.setCurrentCharFormat(fmt)
+        self.mergeCurrentCharFormat(fmt)
         self.settingsChanged.emit(self.settings)
 
     def set_font_size(self, size):
         self.settings['size'] = int(size)
-        fmt = self.currentCharFormat()
+        fmt = QTextCharFormat()
         fmt.setFontPointSize(float(size))
-        self.setCurrentCharFormat(fmt)
+        self.mergeCurrentCharFormat(fmt)
         self.settingsChanged.emit(self.settings)
 
     def set_temporary_font_override(self, font_name):
