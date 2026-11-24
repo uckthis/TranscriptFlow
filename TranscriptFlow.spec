@@ -43,6 +43,7 @@ hiddenimports = [
     'winrt.windows.foundation.collections',
     'pytesseract',
     'PIL',
+    'smart_typing',
 ]
 
 # Add all enchant submodules

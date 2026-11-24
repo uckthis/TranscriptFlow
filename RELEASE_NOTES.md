@@ -1,3 +1,29 @@
+# Release v1.1.7 (Smart Typing, Work Time Tracking & Enhanced Workflow)
+
+This update introduces intelligent auto-capitalization (Smart Typing), live session and file active time tracking, case-preserving bulk spell check corrections, plain text paste options, and smooth auto-scrolling with typewriter mode.
+
+## ✍️ Smart Typing & Auto-Capitalization (New!)
+- **Intelligent Capitalization**: Automatically capitalizes the next word following sentence terminators (`.`, `?`, `!`), newlines, or ellipses (`...`).
+- **Context-Aware Exception Handling**: Skips capitalization after common honorifics and abbreviations (`Mr.`, `Dr.`, `vs.`, initials), decimal numbers, and video timecodes.
+- **Custom Triggers**: Define your own punctuation triggers (such as `--`, `:`, `~`) in Preferences.
+- **Ribbon & Preferences Integration**: Toggle Smart Typing instantly via the new split button in Ribbon Zone C or fine-tune trigger rules in **Edit > Options... > General**.
+
+## ⏱️ Live Working Time & Word Statistics
+- **Status Bar Productivity Metrics**: Real-time display of active **Session Time**, accumulated **File Time**, and live **Word Count**.
+- **Smart Idle Detection**: Timers automatically pause when you are idle or when the application is in the background, only counting active work or media playback. File times persist reliably across editing sessions.
+
+## 🔡 Case-Preserving Spell Check Corrections
+- **"Change All (keep caps)"**: Replace misspelled words globally while intelligently preserving the original casing of each individual match (UPPERCASE, Title Case, or lowercase).
+- **Single-Step Undo**: Undo bulk spell corrections cleanly with a single `Ctrl+Z`.
+- **Context Menu Integration**: Right-click any flagged word to replace all occurrences directly.
+
+## 📄 Paste Plain Text & Smooth Auto-Scrolling
+- **Paste Plain Text**: New `Ctrl+Shift+V` shortcut, Edit menu action, and right-click context menu option to strip external formatting and paste pure text.
+- **Auto-Scroll & Typewriter Mode**: Toggleable view modes on Ribbon Zone A (*Smart Margin*, *Typewriter Center*, *Advance Bump*, and *Scroll Past End*).
+- **1-Line Smooth Wheel Scrolling**: Replaced jerky 3-line jumps with precise, smooth single-line mouse wheel scrolling.
+
+---
+
 # Release v1.1.6 (Stability & UI Overlap Fixes)
 
 This release addresses UI item layout in management dialogs, prevents formatting loss during settings changes, and fixes application freezes during bulk Replace All operations.

@@ -90,12 +90,12 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QSlider, QFileDialog, 
                              QMessageBox, QSplitter, QLabel, QFrame, QDockWidget,
                              QInputDialog, QTextBrowser, QDialog, QProgressDialog,
-                             QToolBar, QColorDialog, QFontComboBox, QComboBox, QGridLayout, QSizePolicy, QMenu,
+                             QToolBar, QColorDialog, QFontComboBox, QComboBox, QGridLayout, QSizePolicy, QMenu, QToolButton,
                              QSplashScreen)
-from PyQt6.QtCore import Qt, QUrl, QTimer, QCoreApplication, QByteArray, QRegularExpression, QLocale
-from PyQt6.QtGui import (QAction, QIcon, QKeySequence, QActionGroup, QFont, QColor, 
+from PyQt6.QtCore import Qt, QUrl, QTimer, QCoreApplication, QByteArray, QRegularExpression, QLocale, QRect, QPointF, QEvent
+from PyQt6.QtGui import (QAction, QIcon, QKeySequence, QActionGroup, QFont, QColor,
                          QTextCharFormat, QFontDatabase, QTextCursor, QPixmap, QPainter, QLinearGradient, QBrush,
-                         QDesktopServices, QPen, QGuiApplication, QTextOption)
+                         QDesktopServices, QPen, QGuiApplication, QTextOption, QPolygonF, QPalette, QCursor)
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog, QPageSetupDialog
 
@@ -116,6 +116,139 @@ from dialogs import (MediaSourceDialog, SnippetsManagerDialog,
 from backup_dialog import BackupSettingsDialog
 import hardware
 from utils import Exporter, TimecodeHelper, SettingsManager, FileManager, BackupManager, TranscriptParser
+
+class RibbonSplitButton(QPushButton):
+    """Ribbon button with a small drop-down arrow in the lower-right corner.
+
+    QPushButton.setMenu() turns the *whole* button into a menu trigger, so the
+    menu is hosted here and popped up manually instead:
+
+        * clicking the button body toggles the button (like the Spell Check button)
+        * clicking only the little arrow opens the drop-down menu
+
+    The arrow is painted by hand so that it sits in the corner exactly like the
+    native menu-indicator of the Themes / Layouts buttons.
+    """
+
+    # Geometry measured from the native Themes button indicator (widget pixels)
+    ARROW_W = 10
+    ARROW_H = 5
+    ARROW_MARGIN_RIGHT = 3
+    ARROW_MARGIN_BOTTOM = 6
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self._menu = None
+        self._arrow_active = False
+        # Watches the real cursor position while a popup menu is open.
+        self._hover_watch = QTimer(self)
+        self._hover_watch.setInterval(150)
+        self._hover_watch.timeout.connect(self._refresh_hover)
+
+    # --- menu plumbing -------------------------------------------------
+    def setMenu(self, menu):
+        """Keeps the menu out of QPushButton so the body stays a normal click."""
+        self._menu = menu
+        if menu is not None:
+            menu.aboutToHide.connect(self._refresh_hover)
+        self.update()
+
+    def menu(self):
+        return self._menu
+
+    # --- hover bookkeeping ----------------------------------------------
+    def _cursor_over_button(self):
+        """True when the real cursor is inside the button."""
+        return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+
+    def _refresh_hover(self):
+        """Repaint when the real cursor no longer matches the hover state.
+
+        While a popup menu is open Qt grabs the mouse, so no leave event ever
+        reaches this button. It can therefore stay flagged as "the cursor is on
+        me" and keep the hover colour after the menu was dismissed, until the
+        cursor happens to travel over it again. The paint handler re-syncs the
+        state with the real cursor position, so one repaint clears it.
+        """
+        if self._cursor_over_button() != self.underMouse():
+            self.update()
+        if self._menu is None or not self._menu.isVisible():
+            self._hover_watch.stop()
+
+    def _apply_hover_state(self):
+        over = self._cursor_over_button()
+        if over != self.underMouse():
+            self.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, over)
+            self.update()
+
+    # --- geometry -------------------------------------------------------
+    def _arrow_rect(self):
+        return QRect(self.width() - self.ARROW_MARGIN_RIGHT - self.ARROW_W,
+                     self.height() - self.ARROW_MARGIN_BOTTOM - self.ARROW_H,
+                     self.ARROW_W, self.ARROW_H)
+
+    def _arrow_hit(self, pos):
+        # slightly generous hit area around the visible triangle
+        return self._arrow_rect().adjusted(-4, -5, 4, 4).contains(pos)
+
+    # --- painting -------------------------------------------------------
+    def paintEvent(self, event):
+        # Tie the hover state to the real cursor position instead of relying on
+        # Qt's enter/leave bookkeeping, which goes stale while a popup grabs
+        # the mouse.
+        over = self._cursor_over_button()
+        if over != self.underMouse():
+            self.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, over)
+        super().paintEvent(event)
+        if self._menu is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        # Follow the colour the button paints its label in: white on the accent
+        # background (checked / hovered), otherwise the theme text colour - which is
+        # exactly what the native menu-indicator of the Themes button uses.
+        if self.isChecked() or over:
+            arrow_color = QColor(255, 255, 255)
+        else:
+            arrow_color = self.palette().color(QPalette.ColorRole.ButtonText)
+        painter.setBrush(arrow_color)
+        r = self._arrow_rect()
+        painter.drawPolygon(QPolygonF([
+            QPointF(r.left(), r.top()),
+            QPointF(r.right() + 1, r.top()),
+            QPointF(r.center().x(), r.bottom() + 1),
+        ]))
+        painter.end()
+
+    # --- interaction ----------------------------------------------------
+    def mousePressEvent(self, event):
+        if self._menu is not None and self._arrow_hit(event.position().toPoint()):
+            self._arrow_active = True
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._arrow_active:
+            self._arrow_active = False
+            if self._arrow_hit(event.position().toPoint()):
+                self._popup_menu()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _popup_menu(self):
+        menu = self._menu
+        if menu is None:
+            return
+        origin = self.mapToGlobal(QPointF(self.width() - menu.sizeHint().width(),
+                                           self.height()).toPoint())
+        # Watch the cursor while the popup is up: Qt grabs the mouse for the
+        # popup, so no leave event reaches this button and it can stay painted
+        # in the hover colour after the menu was dismissed.
+        self._hover_watch.start()
+        menu.popup(origin)
 
 class ClickableSlider(QSlider):
     def __init__(self, orientation, parent=None, overlay_text=""):
@@ -210,6 +343,15 @@ class MainWindow(QMainWindow):
                 'timecode_new_line': True,
                 'spell_check': True,
                 'spell_check_lang': 'en_GB',
+                'smart_typing': {
+                    'enabled': False,
+                    'capitalize_after_period': True,
+                    'capitalize_after_question': True,
+                    'capitalize_after_exclamation': True,
+                    'capitalize_after_newline': True,
+                    'capitalize_after_ellipsis': False,
+                    'custom_triggers': '',
+                },
                 'autosave_enabled': False,
                 'autosave_interval': 5,
             },
@@ -251,7 +393,10 @@ class MainWindow(QMainWindow):
                 'theme': 'Sepia',
                 'video_player_size': None,
                 'left_splitter_state': None,
-                'player_scaling_behavior': 'proportional'
+                'player_scaling_behavior': 'proportional',
+                'auto_scroll': False,
+                'auto_scroll_mode': 'smart_margin',
+                'scroll_past_end': True
             },
             'playback': {
                 'volume': 36,
@@ -278,7 +423,8 @@ class MainWindow(QMainWindow):
                 'prefix': '',
                 'suffix': '',
                 'shortcut': 'Ctrl+Shift+O'
-            }
+            },
+            'file_time': {}
         }
         
         self.find_dialog = None # Initialize Find & Replace dialog state
@@ -287,6 +433,14 @@ class MainWindow(QMainWindow):
         self.shortcuts = self.config['shortcuts']
         self.snippets = self.config['snippets']
         self.recent_files = self.config.get('recent_files', [])
+
+        # Session / per-file working time
+        self.session_seconds = 0.0
+        saved_file_time = self.config.get('file_time', {})
+        self._file_seconds = dict(saved_file_time) if isinstance(saved_file_time, dict) else {}
+        self._last_stats_tick = time.monotonic()
+        self._last_activity_at = self._last_stats_tick
+        self._stats_time_saved_at = self._last_stats_tick
 
         # UI visibility flags
         self.show_timeline = self.config['ui']['show_timeline']
@@ -297,6 +451,9 @@ class MainWindow(QMainWindow):
         self.dark_mode = self.config['ui'].get('dark_mode', False)
         self.current_theme = self.config['ui'].get('theme', 'Light')
         self.rtl_mode = self.config['ui'].get('rtl_mode', False)
+        self.auto_scroll_enabled = self.config['ui'].get('auto_scroll', False)
+        self.auto_scroll_mode = self.config['ui'].get('auto_scroll_mode', 'smart_margin')
+        self.scroll_past_end = self.config['ui'].get('scroll_past_end', True)
         
         # Playback settings
         self.playback_config = self.config.get('playback', {
@@ -317,6 +474,15 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.init_ocr_shortcut()
         self.init_menus()
+        self.sync_autoscroll_ui()
+
+        app_instance = QApplication.instance()
+        if app_instance:
+            app_instance.installEventFilter(self)
+
+        self.stats_timer = QTimer(self)
+        self.stats_timer.timeout.connect(self._stats_tick)
+        self.stats_timer.start(1000)
         
         # Delayed/Safe Initialization
         # This mitigates the memory access crash on startup by letting the OS
@@ -411,9 +577,41 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0,0,0,0)
         main_layout.setSpacing(0)
         
-        # Hide standard status bar to save space; use transient toast for messages
+        # Normal status messages stay on the transient toast; stats get a
+        # dedicated 14px strip so no status-bar margins waste vertical space.
         self.statusBar().hide()
-        
+        self.stats_bar = QFrame()
+        self.stats_bar.setObjectName("stats_bar")
+        self.stats_bar.setFixedHeight(14)
+        self.stats_bar.setStyleSheet(
+            "#stats_bar { background: transparent; border-top: 1px solid #d9d9d9; }")
+        stats_layout = QHBoxLayout(self.stats_bar)
+        stats_layout.setContentsMargins(0, 0, 0, 0)
+        stats_layout.setSpacing(0)
+        stats_layout.addStretch()
+
+        stat_style = ("color: #475569; font-size: 10px; "
+                      "margin: 0px; padding: 0px 5px;")
+        sep_style = "color: #94a3b8; font-size: 10px; margin: 0px; padding: 0px;"
+        self.lbl_session_time = QLabel("Session 00:00:00")
+        self.lbl_file_time = QLabel("File 00:00:00")
+        self.lbl_status_words = QLabel("0 words")
+        separators = (QLabel("|"), QLabel("|"))
+        for label in (self.lbl_session_time, self.lbl_file_time,
+                      self.lbl_status_words):
+            label.setFixedHeight(13)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight |
+                               Qt.AlignmentFlag.AlignVCenter)
+            label.setStyleSheet(stat_style)
+        for label in separators:
+            label.setFixedHeight(13)
+            label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+            label.setStyleSheet(sep_style)
+        for widget in (self.lbl_session_time, separators[0],
+                       self.lbl_file_time, separators[1],
+                       self.lbl_status_words):
+            stats_layout.addWidget(widget)
+
         # Floating Toast for status messages
         self.toast_label = QLabel(self)
         self.toast_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -517,11 +715,13 @@ class MainWindow(QMainWindow):
         # The 1st value (10) below is the left margin (editor side of the gap)
         self.right_layout.setContentsMargins(10,0,10,10) 
         self.editor = TranscriptEditor(self.shortcuts, self.snippets, self.settings)
+        self.editor.set_auto_scroll(self.auto_scroll_enabled, self.auto_scroll_mode, self.scroll_past_end)
         # Note: Connection is handled in __init__ after init_ui
         self.editor.seekRequested.connect(self.engine.seek)
         self.editor.commandTriggered.connect(self.handle_command)
         self.editor.snippetTriggered.connect(self.handle_snippet)
         self.editor.settingsChanged.connect(self.handle_editor_settings_change)
+        self.editor.document().contentsChanged.connect(self._update_status_word_count)
         self.right_layout.addWidget(self.editor)
         
         self.main_splitter.addWidget(self.left_panel); self.main_splitter.addWidget(self.right_panel)
@@ -585,6 +785,52 @@ class MainWindow(QMainWindow):
             if t == self.current_theme: act.setChecked(True)
         self.btn_ribbon_themes.setMenu(theme_menu)
         zone_a_layout.addWidget(self.btn_ribbon_themes)
+
+        # Auto Scroll Menu Button
+        # NOTE: Built as a RibbonSplitButton (a themed QPushButton) rather than a
+        # QToolButton. The theme sheet only styles QPushButton with the premium
+        # gradient/border/rounded shape, and a plain setMenu() on a QPushButton turns
+        # the whole button into a menu trigger. The split button keeps the Themes /
+        # Layouts look, toggles on a body click and opens the menu from the arrow.
+        self.btn_ribbon_autoscroll = RibbonSplitButton("📜 Auto Scroll")
+        self.btn_ribbon_autoscroll.setCheckable(True)
+        self.btn_ribbon_autoscroll.setChecked(self.auto_scroll_enabled)
+        self.btn_ribbon_autoscroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_ribbon_autoscroll.setToolTip(
+            "Auto Scroll - click to toggle, arrow to pick the scroll mode")
+        self.btn_ribbon_autoscroll.clicked.connect(self.toggle_autoscroll)
+
+        autoscroll_menu = QMenu(self)
+        self.autoscroll_mode_group = QActionGroup(self)
+        self.autoscroll_mode_group.setExclusive(True)
+
+        mode_actions = [
+            ("Smart Margin (Keep 5-8 lines ahead)", "smart_margin"),
+            ("Typewriter Mode (Center cursor)", "typewriter"),
+            ("Advance Bump (Scroll near bottom)", "advance_bump")
+        ]
+        self.autoscroll_menu_actions = {}
+        for label, mode_key in mode_actions:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setData(mode_key)
+            if mode_key == self.auto_scroll_mode:
+                act.setChecked(True)
+            act.triggered.connect(lambda chk, m=mode_key: self.set_autoscroll_mode(m))
+            self.autoscroll_mode_group.addAction(act)
+            autoscroll_menu.addAction(act)
+            self.autoscroll_menu_actions[mode_key] = act
+
+        autoscroll_menu.addSeparator()
+
+        self.act_scroll_past_end = QAction("Scroll Past End of Document", self)
+        self.act_scroll_past_end.setCheckable(True)
+        self.act_scroll_past_end.setChecked(self.scroll_past_end)
+        self.act_scroll_past_end.triggered.connect(self.toggle_scroll_past_end)
+        autoscroll_menu.addAction(self.act_scroll_past_end)
+
+        self.btn_ribbon_autoscroll.setMenu(autoscroll_menu)
+        zone_a_layout.addWidget(self.btn_ribbon_autoscroll)
         
         self.ribbon_splitter.addWidget(self.zone_a)
 
@@ -675,8 +921,8 @@ class MainWindow(QMainWindow):
         # Segment 5: Zone C (Utility Shortcuts)
         self.zone_c = QFrame()
         zone_c_layout = QHBoxLayout(self.zone_c)
-        zone_c_layout.setContentsMargins(5, 0, 15, 0)
-        zone_c_layout.setSpacing(6)
+        zone_c_layout.setContentsMargins(2, 0, 4, 0)
+        zone_c_layout.setSpacing(3)
         
         def create_util_btn(text, slot):
             btn = QPushButton(text)
@@ -691,15 +937,33 @@ class MainWindow(QMainWindow):
         self.btn_spell = create_util_btn("🔡 Spell Check", self.toggle_spell_check)
         self.btn_spell.setCheckable(True)
         self.btn_spell.setChecked(self.settings.get('spell_check', True))
+
+        self.btn_smart_typing = create_util_btn("✨ Smart", self.toggle_smart_typing)
+        self.btn_smart_typing.setCheckable(True)
+        smart_conf = self.settings.get('smart_typing', {})
+        self.btn_smart_typing.setChecked(
+            bool(smart_conf.get('enabled', False)) if isinstance(smart_conf, dict) else False)
+        self.btn_smart_typing.setToolTip(
+            "Smart Typing & Formatting - click to toggle, set rules in Edit > Options")
         
         self.btn_adj_tc = create_util_btn("⏱ Adjust TC", self.adjust_timecodes)
         self.btn_ribbon_snippets = create_util_btn("📋 Snippets", self.open_snippets_dialog)
         self.btn_ribbon_shortcuts = create_util_btn("⌨️ Shortcuts", self.open_shortcuts_dialog)
         self.btn_ribbon_offset = create_util_btn("⏳ Offset", self.set_media_offset)
         self.btn_settings = create_util_btn("⚙️ Settings", self.open_transcript_settings)
-        
+
+        # Zone C is the widest ribbon segment. The theme stylesheet gives these
+        # buttons tighter padding via #zone_c_util; everything else (gradient,
+        # border, hover, checked) still comes from the active theme.
+        for _btn in (self.btn_ocr, self.btn_spell, self.btn_smart_typing,
+                     self.btn_adj_tc, self.btn_ribbon_snippets,
+                     self.btn_ribbon_shortcuts, self.btn_ribbon_offset,
+                     self.btn_settings):
+            _btn.setObjectName("zone_c_util")
+
         zone_c_layout.addWidget(self.btn_ocr)
         zone_c_layout.addWidget(self.btn_spell)
+        zone_c_layout.addWidget(self.btn_smart_typing)
         zone_c_layout.addWidget(self.btn_adj_tc); zone_c_layout.addWidget(self.btn_ribbon_snippets)
         zone_c_layout.addWidget(self.btn_ribbon_shortcuts); zone_c_layout.addWidget(self.btn_ribbon_offset)
         zone_c_layout.addWidget(self.btn_settings)
@@ -724,10 +988,14 @@ class MainWindow(QMainWindow):
         else:
             self.ribbon_splitter.setSizes([260, 300, 440, 0, 400])
 
+        # Reserve the width Zone A needs for its buttons (refreshed on every theme change)
+        self.update_ribbon_zone_a_width()
+
         self.editor.cursorPositionChanged.connect(self.update_ribbon_format)
         self.editor.currentCharFormatChanged.connect(lambda f: self.update_ribbon_format())
         
         main_layout.addWidget(self.main_splitter)
+        main_layout.addWidget(self.stats_bar)
 
         # Waveform Dock (Detachable & Full Width)
         self.waveform_dock = QDockWidget("Timeline / Waveform", self)
@@ -777,6 +1045,35 @@ class MainWindow(QMainWindow):
         self.video_frame.show()
         
         self.apply_player_scaling()
+
+
+    def update_ribbon_zone_a_width(self):
+        """Pin Zone A to the width its buttons actually need.
+
+        The ribbon splitter restores a saved zone width from the config, which can be
+        a few pixels narrower than the buttons require. QBoxLayout then shrinks the
+        last widget below its minimum and Qt elides the label ("Auto Scrol...").
+        Reserving the summed size hints keeps every ribbon label intact; the splitter
+        claims the extra pixels from the neighbouring zones automatically.
+        """
+        zone = getattr(self, 'zone_a', None)
+        if zone is None:
+            return
+        lay = zone.layout()
+        if lay is None:
+            return
+        margins = lay.contentsMargins()
+        widgets = [lay.itemAt(i).widget() for i in range(lay.count())]
+        widgets = [w for w in widgets if w is not None]
+        total = margins.left() + margins.right()
+        total += lay.spacing() * max(0, len(widgets) - 1)
+        for w in widgets:
+            # The theme stylesheet repolish is deferred by Qt, so make sure the widget
+            # is polished before asking for its size hint - otherwise we would measure
+            # the pre-theme metrics and reserve too little space.
+            w.ensurePolished()
+            total += w.sizeHint().width()
+        zone.setMinimumWidth(total)
 
 
     def _on_waveform_seek(self, ms):
@@ -982,6 +1279,43 @@ class MainWindow(QMainWindow):
                 background: {theme['accent']};
                 color: white;
                 border: 2px solid {theme['glow']};
+            }}
+
+            QPushButton#zone_c_util {{
+                padding: 8px 3px;
+                font-size: 11px;
+            }}
+
+            QFrame#smart_typing_chip {{
+                background: {theme['btn_grad'][0]};
+                border: 1px solid {theme['border']};
+                border-radius: 8px;
+                color: {theme['text']};
+            }}
+            QFrame#smart_typing_chip:hover {{
+                background: {theme['btn_grad'][1]};
+                border: 1px solid {theme['accent']};
+            }}
+            QFrame#smart_typing_chip[checked="true"] {{
+                background: {theme['accent']};
+                color: white;
+                border: 2px solid {theme['glow']};
+            }}
+            QFrame#smart_typing_chip[checked="false"] QLabel#smart_chip_symbol {{
+                font-size: 18px; font-weight: 500; color: {theme['text']};
+                background: {theme['btn_grad'][0]};
+            }}
+            QFrame#smart_typing_chip[checked="false"] QLabel#smart_chip_caption {{
+                font-size: 11px; color: {theme['text']};
+                background: {theme['btn_grad'][0]};
+            }}
+            QFrame#smart_typing_chip[checked="true"] QLabel#smart_chip_symbol {{
+                font-size: 18px; font-weight: 500; color: white;
+                background: {theme['accent']};
+            }}
+            QFrame#smart_typing_chip[checked="true"] QLabel#smart_chip_caption {{
+                font-size: 11px; color: white;
+                background: {theme['accent']};
             }}
 
             /* Text Editor with Premium Styling */
@@ -1300,8 +1634,24 @@ class MainWindow(QMainWindow):
                     border-bottom: 2px solid {theme['border']};
                     padding: 2px;
                 }}
-                QToolButton {{ color: white; border-radius: 4px; padding: 4px; margin: 2px; }}
-                QToolButton:hover {{ background: rgba(255, 255, 255, 0.2); }}
+                QToolButton {{ 
+                    color: white; 
+                    background: rgba(255, 255, 255, 0.1); 
+                    border: 1px solid rgba(255, 255, 255, 0.2); 
+                    border-radius: 4px; 
+                    padding: 4px 6px; 
+                    font-size: 11px;
+                }}
+                QToolButton:hover {{ background: rgba(255, 255, 255, 0.25); }}
+                QToolButton:checked {{ 
+                    background: #222;
+                    color: #0f0;
+                    border: 2px solid #0f0;
+                }}
+                QToolButton::menu-button {{
+                    border-left: 1px solid rgba(255, 255, 255, 0.2);
+                    width: 16px;
+                }}
                 QComboBox, QFontComboBox {{ border-radius: 4px; padding: 2px; }}
                 QPushButton {{ 
                     background: rgba(255, 255, 255, 0.1); 
@@ -1415,6 +1765,12 @@ class MainWindow(QMainWindow):
                 }}
             """)
         
+        # Ribbon buttons are re-sized by the theme - re-reserve Zone A so no label clips.
+        # Qt applies the new stylesheet asynchronously, so measure again on the next
+        # event loop pass with the final, themed metrics.
+        self.update_ribbon_zone_a_width()
+        QTimer.singleShot(0, self.update_ribbon_zone_a_width)
+
         # Force redraw
         self.update()
         
@@ -1735,6 +2091,7 @@ class MainWindow(QMainWindow):
         self.add_action_safe(edit_menu, "Cut", self.editor.cut, QKeySequence.StandardKey.Cut)
         self.add_action_safe(edit_menu, "Copy", self.editor.copy, QKeySequence.StandardKey.Copy)
         self.add_action_safe(edit_menu, "Paste", self.editor.paste, QKeySequence.StandardKey.Paste)
+        self.add_action_safe(edit_menu, "Paste as Plain Text", self.editor.paste_plain_text, "Ctrl+Shift+V")
         self.add_action_safe(edit_menu, "Delete", lambda: self.editor.textCursor().removeSelectedText(), "Delete")
         self.add_action_safe(edit_menu, "Select All", self.editor.selectAll, QKeySequence.StandardKey.SelectAll)
         edit_menu.addSeparator()
@@ -1845,6 +2202,39 @@ class MainWindow(QMainWindow):
         self.rtl_act.setChecked(self.rtl_mode)
         self.rtl_act.triggered.connect(self.toggle_rtl)
         view_menu.addAction(self.rtl_act)
+        
+        view_menu.addSeparator()
+
+        # --- Auto Scroll Submenu ---
+        autoscroll_view_menu = view_menu.addMenu("Auto Scroll")
+
+        self.act_view_autoscroll = QAction("Enable Auto Scroll", self)
+        self.act_view_autoscroll.setCheckable(True)
+        self.act_view_autoscroll.setShortcut(QKeySequence("Ctrl+Alt+A"))
+        self.act_view_autoscroll.setChecked(self.auto_scroll_enabled)
+        self.act_view_autoscroll.triggered.connect(self.toggle_autoscroll)
+        autoscroll_view_menu.addAction(self.act_view_autoscroll)
+        autoscroll_view_menu.addSeparator()
+
+        self.view_autoscroll_group = QActionGroup(self)
+        self.view_autoscroll_group.setExclusive(True)
+        for label, mode_key in [("Smart Margin (Keep 5-8 lines ahead)", "smart_margin"),
+                                ("Typewriter Mode (Center cursor)", "typewriter"),
+                                ("Advance Bump (Scroll near bottom)", "advance_bump")]:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            if mode_key == self.auto_scroll_mode:
+                act.setChecked(True)
+            act.triggered.connect(lambda chk, m=mode_key: self.set_autoscroll_mode(m))
+            self.view_autoscroll_group.addAction(act)
+            autoscroll_view_menu.addAction(act)
+
+        autoscroll_view_menu.addSeparator()
+        self.act_view_scroll_past_end = QAction("Scroll Past End of Document", self)
+        self.act_view_scroll_past_end.setCheckable(True)
+        self.act_view_scroll_past_end.setChecked(self.scroll_past_end)
+        self.act_view_scroll_past_end.triggered.connect(self.toggle_scroll_past_end)
+        autoscroll_view_menu.addAction(self.act_view_scroll_past_end)
         
         view_menu.addSeparator()
 
@@ -2407,7 +2797,7 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.StandardButton.No:
                 return
         self.editor.clear()
-        self.current_file_path = None
+        self._set_current_file(None)
         self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - Untitled")
         self.is_dirty = False
         self.editor.document().setModified(False)
@@ -2432,7 +2822,7 @@ class MainWindow(QMainWindow):
                 data = FileManager.load_tflow(f)
                 if data:
                     self.restore_state(data)
-                    self.current_file_path = f
+                    self._set_current_file(f)
                     self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(f)}")
             else:
                 with open(f, 'r', encoding='utf-8') as file:
@@ -2441,7 +2831,7 @@ class MainWindow(QMainWindow):
                         self.editor.setHtml(content)
                     else:
                         self.editor.setPlainText(content)
-                self.current_file_path = f
+                self._set_current_file(f)
                 self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(f)}")
             
             # Reset modified flag after load
@@ -2460,7 +2850,7 @@ class MainWindow(QMainWindow):
                 data = FileManager.load_tflow(f)
                 if data:
                     self.restore_state(data)
-                    self.current_file_path = f
+                    self._set_current_file(f)
                     self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(f)}")
                     self.update_recent_files(f)
                     self.is_dirty = False
@@ -2525,7 +2915,7 @@ class MainWindow(QMainWindow):
         data = FileManager.load_tflow(path)
         if data:
             self.restore_state(data)
-            self.current_file_path = path
+            self._set_current_file(path)
             self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(path)}")
             self.update_recent_files(path)
             self.is_dirty = False
@@ -2586,7 +2976,7 @@ class MainWindow(QMainWindow):
             self.config['last_export_dir'] = os.path.dirname(f)
             self.media_just_loaded = False # Reset once we have a manual save
             self.save_config()
-            self.current_file_path = f
+            self._set_current_file(f)
             self.save_doc()
             self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - {os.path.basename(f)}")
 
@@ -2867,6 +3257,9 @@ class MainWindow(QMainWindow):
             # Apply immediate settings
             self.settings = self.config['settings']
             self.editor.settings = self.settings
+            smart_conf = self.settings.get('smart_typing', {})
+            self.btn_smart_typing.setChecked(
+                bool(smart_conf.get('enabled', False)) if isinstance(smart_conf, dict) else False)
             self.editor.update_font()
             self.update_tc_helper()
             self.font_combo.blockSignals(True)
@@ -2898,6 +3291,17 @@ class MainWindow(QMainWindow):
         self.save_config()
         msg = "Live Spell Check: ON" if enabled else "Live Spell Check: OFF"
         self.show_toast(msg)
+
+    def toggle_smart_typing(self):
+        """Master on/off for the Smart Typing rules selected in Options."""
+        if not isinstance(self.settings.get('smart_typing'), dict):
+            self.settings['smart_typing'] = {}
+        enabled = self.btn_smart_typing.isChecked()
+        self.settings['smart_typing']['enabled'] = enabled
+        self.editor.settings = self.settings
+        self.config['settings'] = self.settings
+        self.save_config()
+        self.show_toast("Smart Typing: ON" if enabled else "Smart Typing: OFF")
 
     def open_spell_check_dialog(self):
         """Opens the full Subtitle-Edit-Style spell check dialog"""
@@ -3030,6 +3434,76 @@ class MainWindow(QMainWindow):
             self.trigger_waveform_generation()
             
         self.save_config()
+
+    def toggle_autoscroll(self, checked=None):
+        if checked is None:
+            self.auto_scroll_enabled = not self.auto_scroll_enabled
+        else:
+            self.auto_scroll_enabled = checked
+        self.config['ui']['auto_scroll'] = self.auto_scroll_enabled
+        self.save_config()
+        self.sync_autoscroll_ui()
+        self.editor.set_auto_scroll(self.auto_scroll_enabled, self.auto_scroll_mode, self.scroll_past_end)
+        status_msg = "Auto Scroll: ON" if self.auto_scroll_enabled else "Auto Scroll: OFF"
+        self.statusBar().showMessage(status_msg, 2000)
+
+    def set_autoscroll_mode(self, mode):
+        self.auto_scroll_mode = mode
+        self.config['ui']['auto_scroll_mode'] = mode
+        self.auto_scroll_enabled = True
+        self.config['ui']['auto_scroll'] = True
+        self.save_config()
+        self.sync_autoscroll_ui()
+        self.editor.set_auto_scroll(self.auto_scroll_enabled, self.auto_scroll_mode, self.scroll_past_end)
+        mode_names = {
+            'smart_margin': 'Smart Margin (Keep 5-8 lines ahead)',
+            'typewriter': 'Typewriter Mode (Center cursor)',
+            'advance_bump': 'Advance Bump (Scroll near bottom)'
+        }
+        self.statusBar().showMessage(f"Auto Scroll: {mode_names.get(mode, mode)}", 2000)
+
+    def toggle_scroll_past_end(self, checked=None):
+        if checked is None:
+            self.scroll_past_end = not self.scroll_past_end
+        else:
+            self.scroll_past_end = checked
+        self.config['ui']['scroll_past_end'] = self.scroll_past_end
+        self.save_config()
+        self.sync_autoscroll_ui()
+        self.editor.set_auto_scroll(self.auto_scroll_enabled, self.auto_scroll_mode, self.scroll_past_end)
+        status_msg = "Scroll Past End: ON" if self.scroll_past_end else "Scroll Past End: OFF"
+        self.statusBar().showMessage(status_msg, 2000)
+
+    def sync_autoscroll_ui(self):
+        if hasattr(self, 'btn_ribbon_autoscroll'):
+            self.btn_ribbon_autoscroll.blockSignals(True)
+            self.btn_ribbon_autoscroll.setChecked(self.auto_scroll_enabled)
+            self.btn_ribbon_autoscroll.blockSignals(False)
+        if hasattr(self, 'act_view_autoscroll'):
+            self.act_view_autoscroll.blockSignals(True)
+            self.act_view_autoscroll.setChecked(self.auto_scroll_enabled)
+            self.act_view_autoscroll.blockSignals(False)
+        if hasattr(self, 'act_scroll_past_end'):
+            self.act_scroll_past_end.blockSignals(True)
+            self.act_scroll_past_end.setChecked(self.scroll_past_end)
+            self.act_scroll_past_end.blockSignals(False)
+        if hasattr(self, 'act_view_scroll_past_end'):
+            self.act_view_scroll_past_end.blockSignals(True)
+            self.act_view_scroll_past_end.setChecked(self.scroll_past_end)
+            self.act_view_scroll_past_end.blockSignals(False)
+        if hasattr(self, 'autoscroll_menu_actions'):
+            for m, act in self.autoscroll_menu_actions.items():
+                act.blockSignals(True)
+                act.setChecked(m == self.auto_scroll_mode)
+                act.blockSignals(False)
+        if hasattr(self, 'view_autoscroll_group'):
+            for act in self.view_autoscroll_group.actions():
+                is_cur = (self.auto_scroll_mode == 'smart_margin' and 'Smart Margin' in act.text()) or \
+                         (self.auto_scroll_mode == 'typewriter' and 'Typewriter' in act.text()) or \
+                         (self.auto_scroll_mode == 'advance_bump' and 'Advance Bump' in act.text())
+                act.blockSignals(True)
+                act.setChecked(is_cur)
+                act.blockSignals(False)
 
     def on_waveform_visibility_changed(self, visible):
         """Syncs the menu action when dock is closed via 'x'"""
@@ -3254,6 +3728,73 @@ class MainWindow(QMainWindow):
             f"Words: {words}\nCharacters: {chars}\nLines: {lines}"
         )
 
+    @staticmethod
+    def _format_duration(seconds):
+        total = max(0, int(seconds))
+        hours, remainder = divmod(total, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    def _time_key(self, path=None):
+        path = self.current_file_path if path is None else path
+        return os.path.normcase(os.path.abspath(path)) if path else None
+
+    def _persist_file_times(self):
+        self.config['file_time'] = {
+            key: int(value) for key, value in self._file_seconds.items()
+            if value >= 1
+        }
+        if not self.is_initializing:
+            self.sm.save(self.config)
+
+    def _set_current_file(self, path):
+        if getattr(self, 'current_file_path', None) == path:
+            return
+        self._persist_file_times()
+        self.current_file_path = path
+        self._update_status_stats()
+
+    def _update_status_word_count(self):
+        if not hasattr(self, 'lbl_status_words'):
+            return
+        words = len(self.editor.toPlainText().split())
+        noun = 'word' if words == 1 else 'words'
+        self.lbl_status_words.setText(f"{words:,} {noun}")
+
+    def _update_status_stats(self):
+        if not hasattr(self, 'lbl_session_time'):
+            return
+        self.lbl_session_time.setText(
+            f"Session {self._format_duration(self.session_seconds)}")
+        key = self._time_key()
+        file_seconds = self._file_seconds.get(key, 0.0) if key else 0.0
+        self.lbl_file_time.setText(f"File {self._format_duration(file_seconds)}")
+        self._update_status_word_count()
+
+    def _stats_tick(self):
+        """Accumulate active working time once per second."""
+        now = time.monotonic()
+        delta = max(0.0, min(now - self._last_stats_tick, 5.0))
+        self._last_stats_tick = now
+
+        app_active = QApplication.applicationState() == Qt.ApplicationState.ApplicationActive
+        playing = False
+        try:
+            playing = bool(self.engine.is_playing())
+        except Exception:
+            pass
+        active = app_active and (playing or (now - self._last_activity_at) < 60)
+
+        if active:
+            self.session_seconds += delta
+            key = self._time_key()
+            if key:
+                self._file_seconds[key] = self._file_seconds.get(key, 0.0) + delta
+                if now - self._stats_time_saved_at >= 30:
+                    self._persist_file_times()
+                    self._stats_time_saved_at = now
+        self._update_status_stats()
+
     def sync_transcript(self):
         """Aligns transcript timecodes with current playback position using a pivot."""
         # Current time as DISPLAYED to the user
@@ -3377,7 +3918,7 @@ class MainWindow(QMainWindow):
                     )
                     if reply == QMessageBox.StandardButton.Yes:
                         self.restore_state(data)
-                        self.current_file_path = None 
+                        self._set_current_file(None)
                         self.setWindowTitle(f"TranscriptFlow Pro v{constants.APP_VERSION} - Restored Backup")
                         self.statusBar().showMessage("Backup restored successfully", 3000)
 
@@ -3812,7 +4353,10 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
 
     def eventFilter(self, obj, event):
-        """Track video frame resize events and save size to config"""
+        """Track activity for time stats and video resize events."""
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.MouseButtonPress,
+                            QEvent.Type.MouseMove, QEvent.Type.Wheel):
+            self._last_activity_at = time.monotonic()
         if obj == self.video_frame and event.type() == event.Type.Resize:
             # Save the new size to config
             new_size = [self.video_frame.width(), self.video_frame.height()]
@@ -3821,6 +4365,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Warn about unsaved changes on close"""
+        self._persist_file_times()
         if self.is_dirty or self.editor.document().isModified():
             reply = QMessageBox.question(self, "Unsaved Changes",
                 "You have unsaved changes in your document. Do you want to save them before exiting?",

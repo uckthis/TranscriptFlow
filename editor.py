@@ -1,7 +1,8 @@
-from PyQt6.QtWidgets import QTextEdit, QMenu
-from PyQt6.QtCore import pyqtSignal, Qt, QRegularExpression
-from PyQt6.QtGui import QKeyEvent, QKeySequence, QTextCursor, QFont, QColor, QTextCharFormat, QSyntaxHighlighter, QAction
+from PyQt6.QtWidgets import QTextEdit, QMenu, QApplication
+from PyQt6.QtCore import pyqtSignal, Qt, QRegularExpression, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QKeyEvent, QKeySequence, QTextCursor, QTextDocument, QFont, QColor, QTextCharFormat, QSyntaxHighlighter, QAction
 from utils import TimecodeHelper
+import smart_typing
 import re
 import os
 
@@ -88,6 +89,7 @@ class TranscriptEditor(QTextEdit):
         self.settings = settings
         self.setMouseTracking(True)
         self.temporary_font_override = None # For Urdu auto-switching
+        self._smart_retro_marker = None  # Last retroactive cap, for '...' undo
         self.update_font()
         
         # Spell Checker Integration
@@ -101,6 +103,118 @@ class TranscriptEditor(QTextEdit):
         # Redundant Modification Safeguard:
         # 1. Standard text change tracking
         self.document().contentsChanged.connect(lambda: self.document().setModified(True))
+
+        # Auto-scroll and overscroll padding
+        self.auto_scroll_enabled = True
+        self.auto_scroll_mode = 'smart_margin'  # 'smart_margin', 'typewriter', 'advance_bump'
+        self.scroll_past_end = True
+        self.cursorPositionChanged.connect(self._handle_auto_scroll)
+
+        # Smooth 1-line mouse wheel scrolling
+        self._scroll_target = None
+        self._scroll_anim = QPropertyAnimation(self.verticalScrollBar(), b"value")
+        self._scroll_anim.setDuration(100)
+        self._scroll_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def set_auto_scroll(self, enabled=True, mode='smart_margin', scroll_past_end=True):
+        self.auto_scroll_enabled = enabled
+        self.auto_scroll_mode = mode
+        self.scroll_past_end = scroll_past_end
+        self.update_bottom_margin()
+        if self.auto_scroll_enabled:
+            self._handle_auto_scroll()
+
+    def update_bottom_margin(self):
+        root = self.document().rootFrame()
+        if not root:
+            return
+        fmt = root.frameFormat()
+        if self.scroll_past_end:
+            viewport_h = self.viewport().height()
+            margin = max(150, int(viewport_h * 0.5)) if viewport_h > 0 else 200
+            fmt.setBottomMargin(float(margin))
+        else:
+            fmt.setBottomMargin(0.0)
+        root.setFrameFormat(fmt)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_bottom_margin()
+
+    def _handle_auto_scroll(self):
+        if not self.auto_scroll_enabled:
+            return
+
+        viewport_h = self.viewport().height()
+        if viewport_h <= 0:
+            return
+
+        cursor_rect = self.cursorRect()
+        line_height = self.fontMetrics().lineSpacing()
+        vbar = self.verticalScrollBar()
+
+        if self.auto_scroll_mode == 'smart_margin':
+            # Guarantee 5-8 lines of upcoming text below cursor
+            bottom_margin = max(5 * line_height, int(viewport_h * 0.25))
+            top_margin = max(3 * line_height, int(viewport_h * 0.15))
+
+            if cursor_rect.bottom() > viewport_h - bottom_margin:
+                delta = cursor_rect.bottom() - (viewport_h - bottom_margin)
+                vbar.setValue(vbar.value() + delta)
+            elif cursor_rect.top() < top_margin:
+                delta = top_margin - cursor_rect.top()
+                vbar.setValue(vbar.value() - delta)
+
+        elif self.auto_scroll_mode == 'typewriter':
+            target_y = viewport_h // 2
+            diff = cursor_rect.center().y() - target_y
+            if abs(diff) > line_height // 2:
+                vbar.setValue(vbar.value() + diff)
+
+        elif self.auto_scroll_mode == 'advance_bump':
+            bottom_threshold = int(viewport_h * 0.75)
+            if cursor_rect.bottom() > bottom_threshold:
+                bump = max(4 * line_height, int(viewport_h * 0.25))
+                vbar.setValue(vbar.value() + bump)
+
+    def wheelEvent(self, event):
+        # Allow standard zoom when Ctrl is held
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            super().wheelEvent(event)
+            return
+
+        delta_y = event.angleDelta().y()
+        if delta_y != 0:
+            # 120 units per standard wheel notch -> exactly 1 line per notch!
+            steps = delta_y / 120.0
+            line_height = self.fontMetrics().lineSpacing()
+            delta_pixels = -int(round(steps * line_height))
+
+            vbar = self.verticalScrollBar()
+            current_val = vbar.value()
+            base_val = self._scroll_target if (self._scroll_anim.state() == QPropertyAnimation.State.Running and self._scroll_target is not None) else current_val
+            target_val = max(vbar.minimum(), min(vbar.maximum(), base_val + delta_pixels))
+
+            self._scroll_target = target_val
+            self._scroll_anim.stop()
+            self._scroll_anim.setStartValue(current_val)
+            self._scroll_anim.setEndValue(target_val)
+            self._scroll_anim.start()
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+    def paste_plain_text(self):
+        clipboard = QApplication.clipboard()
+        text = clipboard.text()
+        if text:
+            cursor = self.textCursor()
+            cursor.beginEditBlock()
+            cursor.insertText(text)
+            cursor.endEditBlock()
+            self.ensureCursorVisible()
+            if self.auto_scroll_enabled:
+                self._handle_auto_scroll()
 
     def update_font(self):
         font_name = self.settings.get('font', 'Tahoma')
@@ -132,15 +246,27 @@ class TranscriptEditor(QTextEdit):
             self.commandTriggered.emit({'command': 'Toggle Pause and Play', 'skip': 0})
             return
 
+        # Handle Paste as Plain Text (Ctrl+Shift+V)
+        if key == Qt.Key.Key_V and (modifiers & Qt.KeyboardModifier.ControlModifier) and (modifiers & Qt.KeyboardModifier.ShiftModifier):
+            self.paste_plain_text()
+            return
+
         # 2. Reset format on ENTER (Reset on Enter feature)
         if key in [Qt.Key.Key_Return, Qt.Key.Key_Enter]:
             # Remember alignment before enter
             is_right_aligned = self.alignment() == Qt.AlignmentFlag.AlignRight or self.layoutDirection() == Qt.LayoutDirection.RightToLeft
+            group_edit = self._smart_typing_should_group(event, is_newline=True)
+            edit_cursor = self.textCursor() if group_edit else None
+            if edit_cursor:
+                edit_cursor.beginEditBlock()
             super().keyPressEvent(event)
             self.setCurrentCharFormat(self.get_default_format())
             # Maintain alignment for the new block
             if is_right_aligned:
                 self.setAlignment(Qt.AlignmentFlag.AlignRight)
+            self._smart_typing_after_key(event, is_newline=True)
+            if edit_cursor:
+                edit_cursor.endEditBlock()
             return
 
         # 3. Build Shortcut String (e.g. "Ctrl+Shift+P")
@@ -170,8 +296,19 @@ class TranscriptEditor(QTextEdit):
                     return
 
         # 6. Default Typing
+        group_edit = self._smart_typing_should_group(event)
+        if not group_edit:
+            self._smart_retro_marker = None
+        edit_cursor = self.textCursor() if group_edit else None
+        if edit_cursor:
+            edit_cursor.beginEditBlock()
         super().keyPressEvent(event)
-        
+
+        # 6b. Smart Typing & Formatting (after the character is inserted)
+        self._smart_typing_after_key(event)
+        if edit_cursor:
+            edit_cursor.endEditBlock()
+
         # 7. Force block alignment for RTL to prevent BiDi cursor jumping
         # Qt's BiDi algorithm tries to be "smart" and moves RTL text to the left
         # We need to explicitly force the alignment after each keystroke
@@ -181,6 +318,153 @@ class TranscriptEditor(QTextEdit):
             if block_format.alignment() != Qt.AlignmentFlag.AlignRight:
                 block_format.setAlignment(Qt.AlignmentFlag.AlignRight)
                 cursor.setBlockFormat(block_format)
+
+    def _smart_typing_should_group(self, event, is_newline=False):
+        """True when a key may need its text and smart edit in one undo step."""
+        rules = smart_typing.rules_from_settings(self.settings)
+        if not rules['enabled']:
+            return False
+        if event.isAutoRepeat():
+            return False
+        blockers = (Qt.KeyboardModifier.ControlModifier |
+                    Qt.KeyboardModifier.AltModifier |
+                    Qt.KeyboardModifier.MetaModifier)
+        if event.modifiers() & blockers:
+            return False
+        if is_newline:
+            return True
+        text = event.text()
+        custom = smart_typing.parse_custom_triggers(rules['custom_triggers'])
+        custom_char = any(text and token.endswith(text) for token in custom)
+        return (text in ('.', '?', '!') or custom_char or
+                (len(text) == 1 and 'a' <= text <= 'z'))
+
+    def _smart_typing_after_key(self, event, is_newline=False):
+        """Apply Smart Typing rules after the key's text is in the document."""
+        if not self._smart_typing_should_group(event, is_newline):
+            return
+        rules = smart_typing.rules_from_settings(self.settings)
+        text = event.text()
+        cursor = self.textCursor()
+        text_before = cursor.block().text()[:cursor.positionInBlock()]
+        custom_match = smart_typing.ending_custom_trigger(text_before, rules)
+
+        if is_newline:
+            self._smart_retro_marker = None
+            self._smart_capitalize_ahead(rules, True)
+            return
+
+        if text == '.':
+            run = self._trailing_dot_run()
+            if run == 3:
+                if rules.get('capitalize_after_ellipsis'):
+                    self._smart_capitalize_ahead(rules, False)
+                else:
+                    self._revert_retro_marker()
+                    self._smart_retro_marker = None
+                return
+            if run >= 4:
+                self._revert_retro_marker()
+                self._smart_capitalize_ahead(rules, False)
+                return
+            self._smart_capitalize_ahead(rules, False)
+            return
+
+        if text in ('?', '!'):
+            self._smart_retro_marker = None
+            self._smart_capitalize_ahead(rules, False)
+            return
+
+        if custom_match:
+            self._smart_retro_marker = None
+            self._smart_capitalize_ahead(rules, False)
+            return
+
+        if len(text) == 1 and 'a' <= text <= 'z':
+            self._smart_retro_marker = None
+            self._smart_capitalize_typed(text, rules)
+
+    def _trailing_dot_run(self):
+        """Count consecutive dots immediately before the cursor."""
+        cursor = self.textCursor()
+        text = cursor.block().text()[:cursor.positionInBlock()]
+        count = 0
+        for char in reversed(text):
+            if char != '.':
+                break
+            count += 1
+        return count
+
+    def _revert_retro_marker(self):
+        """Undo the capitalization made when the first dot was typed."""
+        marker = self._smart_retro_marker
+        if not marker:
+            return
+        cursor = self.textCursor()
+        position = cursor.position() + marker['offset']
+        block = cursor.block()
+        offset = position - block.position()
+        text = block.text()
+        if offset < 0 or offset >= len(text):
+            return
+        char = text[offset]
+        if char.isupper() and char.lower() == marker['original'].lower():
+            self._replace_char_at(position, marker['original'],
+                                  restore_position=cursor.position())
+
+    def _replace_char_at(self, position, char, restore_position=None):
+        """Replace one character in one undo step, keeping its char format."""
+        if position < 0 or position + 1 >= self.document().characterCount():
+            return False
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(position)
+        char_format = cursor.charFormat()
+        cursor.beginEditBlock()
+        cursor.setPosition(position + 1, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(char)
+        cursor.setPosition(position)
+        cursor.setPosition(position + 1, QTextCursor.MoveMode.KeepAnchor)
+        cursor.setCharFormat(char_format)
+        cursor.clearSelection()
+        cursor.endEditBlock()
+        if restore_position is not None:
+            cursor.setPosition(restore_position)
+            self.setTextCursor(cursor)
+        return True
+
+    def _smart_capitalize_typed(self, letter, rules):
+        """Uppercase the letter just typed when the preceding text arms it."""
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return
+        block = cursor.block()
+        offset = cursor.position() - block.position()
+        text = block.text()
+        if offset < 1 or offset > len(text) or text[offset - 1] != letter:
+            return
+        if not smart_typing.should_capitalize(text[:offset - 1], rules):
+            return
+        self._replace_char_at(cursor.position() - 1, letter.upper())
+
+    def _smart_capitalize_ahead(self, rules, is_newline):
+        """Uppercase an existing lowercase word right after the trigger."""
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return
+        block = cursor.block()
+        offset = cursor.position() - block.position()
+        text_before = '\n' if is_newline else block.text()[:offset]
+        if not smart_typing.should_capitalize(text_before, rules):
+            return
+        text_after = block.text()[offset:]
+        index = smart_typing.find_next_lowercase(text_after)
+        if index < 0:
+            return
+        if self._replace_char_at(cursor.position() + index,
+                                 text_after[index].upper(),
+                                 restore_position=cursor.position()):
+            self._smart_retro_marker = {'offset': index,
+                                        'original': text_after[index]}
 
     def matches_trigger(self, pressed, trigger):
         """Normalize and compare keys"""
@@ -554,6 +838,30 @@ class TranscriptEditor(QTextEdit):
     def contextMenuEvent(self, event):
         menu = self.createStandardContextMenu()
         
+        # Insert "Paste as Plain Text" right after standard "Paste"
+        paste_act = None
+        for act in menu.actions():
+            act_text = act.text().replace("&", "").split('\t')[0].strip()
+            if act_text == "Paste" or act.shortcut() == QKeySequence.StandardKey.Paste:
+                paste_act = act
+                break
+                
+        plain_paste_act = QAction("Paste as Plain Text\tCtrl+Shift+V", self)
+        plain_paste_act.setShortcut(QKeySequence("Ctrl+Shift+V"))
+        plain_paste_act.triggered.connect(self.paste_plain_text)
+        clipboard = QApplication.clipboard()
+        plain_paste_act.setEnabled(bool(clipboard.text()))
+
+        if paste_act:
+            actions = menu.actions()
+            idx = actions.index(paste_act)
+            if idx + 1 < len(actions):
+                menu.insertAction(actions[idx + 1], plain_paste_act)
+            else:
+                menu.addAction(plain_paste_act)
+        else:
+            menu.addAction(plain_paste_act)
+
         # If spell check is enabled, add suggestions
         if self.highlighter.enabled and self.highlighter.valid:
             cursor = self.cursorForPosition(event.pos())
@@ -584,6 +892,14 @@ class TranscriptEditor(QTextEdit):
                         act = QAction(s, self)
                         act.triggered.connect(lambda checked, replacement=s, c=cursor: self.replace_word(c, replacement))
                         menu.insertAction(menu.actions()[0], act)
+
+                        all_act = QAction(f"Change All to '{s}'", self)
+                        all_act.setToolTip(
+                            "Replace every whole-word instance, keeping each one's capitalization")
+                        all_act.triggered.connect(
+                            lambda checked, w=word, replacement=s:
+                            self.replace_all_words(w, replacement))
+                        menu.insertAction(menu.actions()[0], all_act)
                 
                 header_act = QAction(f"Spelling: '{word}'", self)
                 header_act.setEnabled(False)
@@ -650,6 +966,54 @@ class TranscriptEditor(QTextEdit):
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         cursor.insertText(new_text)
         self.setTextCursor(cursor)
+
+    @staticmethod
+    def _match_case(original, replacement):
+        """Apply the capitalization pattern of original to replacement."""
+        if not original or not replacement:
+            return replacement
+        if original.isupper():
+            return replacement.upper()
+        if original[0].isupper() and (len(original) == 1 or original[1:].islower()):
+            return replacement[0].upper() + replacement[1:]
+        return replacement
+
+    def replace_all_words(self, old_word, new_word):
+        """Replace every whole-word occurrence, preserving case and formatting.
+
+        Bracketed annotations such as [teh] are skipped, matching the spell
+        highlighter's own exclusions. All replacements form one undo step.
+        """
+        if not old_word or not new_word or old_word == new_word:
+            return 0
+        doc = self.document()
+        plain = self.toPlainText()
+        group = QTextCursor(doc)
+        group.beginEditBlock()
+        search = QTextCursor(doc)
+        count = 0
+        while True:
+            found = doc.find(old_word, search,
+                             QTextDocument.FindFlag.FindWholeWords)
+            if found.isNull():
+                break
+            start = found.selectionStart()
+            search = found
+            if start > 0 and plain[start - 1] == '[':
+                continue
+            matched = found.selectedText()
+            replacement = self._match_case(matched, new_word)
+            char_format = found.charFormat()
+            found.insertText(replacement)
+            found.setPosition(start)
+            found.setPosition(start + len(replacement),
+                              QTextCursor.MoveMode.KeepAnchor)
+            found.setCharFormat(char_format)
+            found.clearSelection()
+            search = found
+            count += 1
+        group.endEditBlock()
+        return count
 
     def add_to_skip_list(self, word):
         """Add word to session skip list and re-highlight"""

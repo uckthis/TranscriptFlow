@@ -4,7 +4,8 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                              QListWidgetItem, QInputDialog, QMessageBox, QProgressDialog,
                              QColorDialog, QTextEdit, QTextBrowser, QDoubleSpinBox, QSpinBox, 
                              QCheckBox, QFileDialog, QFrame, QFontComboBox,
-                             QGridLayout, QRubberBand, QApplication, QStyledItemDelegate)
+                             QGridLayout, QRubberBand, QApplication, QStyledItemDelegate,
+                             QGroupBox)
 from PyQt6.QtCore import Qt, QSize, QTimer, QRegularExpression, QRect, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QKeyEvent, QColor, QFont, QFontDatabase, QTextCursor, QTextDocument
 import subprocess
@@ -13,6 +14,7 @@ import os
 import shutil
 from ocr_engine import (is_tesseract_installed, get_installed_tesseract_langs, 
                         TESS_LANG_MAP, get_lang_name, get_lang_code, get_tesseract_version)
+import smart_typing
 from ocr_downloader import download_tesseract, download_language
 
 # Configure enchant to use AppData dicts folder BEFORE importing enchant
@@ -2046,11 +2048,60 @@ class FindReplaceDialog(QDialog):
             
         QMessageBox.information(self, "Replace All", f"Replaced {count} occurrences.")
 
+
+class SmartTriggerChip(QFrame):
+    """Compact checkable tile used for Smart Typing trigger choices."""
+
+    def __init__(self, symbol, caption, tooltip, checked=False, parent=None):
+        super().__init__(parent)
+        self.setObjectName("smart_typing_chip")
+        self.setToolTip(tooltip)
+        self.setFixedSize(110, 52)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._checked = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 4, 2, 4)
+        layout.setSpacing(0)
+
+        self.symbol_label = QLabel(symbol)
+        self.symbol_label.setObjectName("smart_chip_symbol")
+        self.symbol_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.symbol_label)
+
+        self.caption_label = QLabel(caption)
+        self.caption_label.setObjectName("smart_chip_caption")
+        self.caption_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.caption_label)
+
+        self.setChecked(checked)
+
+    def isChecked(self):
+        return self._checked
+
+    def setChecked(self, checked):
+        self._checked = bool(checked)
+        self.setProperty("checked", "true" if self._checked else "false")
+        style = self.style()
+        for widget in (self, self.symbol_label, self.caption_label):
+            style.unpolish(widget)
+            style.polish(widget)
+        self.update()
+
+    def mousePressEvent(self, event):
+        self.setChecked(not self._checked)
+        event.accept()
+
+
 class PreferencesDialog(QDialog):
     def __init__(self, parent, config, defaults=None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.resize(600, 550)
+        screen = QApplication.primaryScreen()
+        if screen:
+            available = screen.availableGeometry()
+            self.setMaximumHeight(available.height() - 20)
         self.config = config
         self.defaults = defaults
         
@@ -2060,7 +2111,7 @@ class PreferencesDialog(QDialog):
         # --- TAB 1: General ---
         self.tab_general = QWidget()
         gen_layout = QVBoxLayout(self.tab_general)
-        gen_layout.setSpacing(20)
+        gen_layout.setSpacing(10)
         
         def add_sep(lay):
             line = QFrame(); line.setFrameShape(QFrame.Shape.HLine)
@@ -2094,9 +2145,72 @@ class PreferencesDialog(QDialog):
         as_layout.addWidget(QLabel("min"))
         as_layout.addStretch()
         gen_layout.addLayout(as_layout)
-        
+
         add_sep(gen_layout)
-        
+
+        # Smart Typing & Formatting - kept deliberately compact
+        smart_conf = self.config['settings'].get('smart_typing', {})
+        if not isinstance(smart_conf, dict):
+            smart_conf = {}
+        smart_group = QGroupBox("Smart Typing & Formatting")
+        smart_layout = QVBoxLayout(smart_group)
+        smart_layout.setSpacing(2)
+        self.smart_checks = {}
+
+        master_row = QHBoxLayout()
+        enabled_check = QCheckBox("Enable Smart Typing")
+        enabled_check.setToolTip("Same as the Smart Typing button in Zone C.")
+        enabled_check.setChecked(bool(smart_conf.get(
+            'enabled', smart_typing.DEFAULT_RULES['enabled'])))
+        master_row.addWidget(enabled_check)
+        master_row.addStretch()
+        smart_layout.addLayout(master_row)
+        self.smart_checks['enabled'] = enabled_check
+
+        after_label = QLabel("Capitalize after:")
+        after_label.setStyleSheet(
+            "color: #64748b; font-size: 12px; font-weight: 500;")
+        smart_layout.addWidget(after_label)
+
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(8)
+        for key, symbol, caption, tip in (
+                ('capitalize_after_period', '.', 'Period', 'period'),
+                ('capitalize_after_question', '?', 'Question', 'question mark'),
+                ('capitalize_after_exclamation', '!', 'Exclaim', 'exclamation mark'),
+                ('capitalize_after_newline', '↵', 'New line', 'line break'),
+                ('capitalize_after_ellipsis', '...', 'Ellipsis',
+                 'ellipsis (checked = cap, unchecked = no cap / uncap)')):
+            chip = SmartTriggerChip(
+                symbol, caption, "Capitalize after a " + tip,
+                bool(smart_conf.get(key, smart_typing.DEFAULT_RULES[key])),
+                self)
+            chip_row.addWidget(chip)
+            self.smart_checks[key] = chip
+        chip_row.addStretch()
+        smart_layout.addLayout(chip_row)
+
+        custom_row = QHBoxLayout()
+        custom_row.addWidget(QLabel("Other triggers:"))
+        self.smart_custom_edit = QLineEdit()
+        self.smart_custom_edit.setPlaceholderText("e.g. --, :, ~")
+        self.smart_custom_edit.setToolTip(
+            "Comma-separated triggers; each can be one or more characters. "
+            "Capitalization happens when the whole sequence is typed.")
+        raw_custom = smart_conf.get('custom_triggers', '')
+        self.smart_custom_edit.setText(raw_custom if isinstance(raw_custom, str) else '')
+        custom_row.addWidget(self.smart_custom_edit)
+        smart_layout.addLayout(custom_row)
+
+        smart_note = QLabel(
+            "'...' checkbox: on = caps after ellipsis, off = no caps / uncap. "
+            "Two dots still caps.")
+        smart_note.setStyleSheet("color: #888888; font-size: 11px;")
+        smart_layout.addWidget(smart_note)
+        gen_layout.addWidget(smart_group)
+
+        add_sep(gen_layout)
+
         # Display
         disp_form = QFormLayout()
         disp_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -2374,6 +2488,11 @@ class PreferencesDialog(QDialog):
         self.config['settings']['timecode_new_line'] = self.newline_tc_check.isChecked()
         self.config['settings']['autosave_enabled'] = self.autosave_check.isChecked()
         self.config['settings']['autosave_interval'] = self.autosave_interval.value()
+        self.config['settings']['smart_typing'] = {
+            key: check.isChecked() for key, check in self.smart_checks.items()
+        }
+        self.config['settings']['smart_typing']['custom_triggers'] = (
+            self.smart_custom_edit.text().strip())
         if 'playback' not in self.config: self.config['playback'] = {}
         self.config['playback']['pitch_lock'] = self.pitch_lock_check.isChecked()
         players = ['mpv', 'vlc', 'ffmpeg', 'quicktime']
@@ -2842,8 +2961,8 @@ class SpellCheckDialog(QDialog):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
         # Header: Word Not Found (Big and Bold)
         top_v = QVBoxLayout()
@@ -2895,7 +3014,9 @@ class SpellCheckDialog(QDialog):
             if color: btn.setStyleSheet(f"color: {color};")
             return btn
 
-        self.btn_change_all = create_act_btn("Change All Instances", self.on_use_always)
+        self.btn_change_all = create_act_btn("Change All (keep caps)", self.on_use_always)
+        self.btn_change_all.setToolTip(
+            "Replace every whole-word instance; each match keeps its own capitalization")
         self.btn_skip = create_act_btn("Skip Once", self.on_skip)
         self.btn_skip_all = create_act_btn("Skip All (Session)", self.on_skip_all)
         self.btn_add_dict = create_act_btn("Add to Dictionary", self.on_add_to_dict)
@@ -3074,6 +3195,8 @@ class SpellCheckDialog(QDialog):
             self.editor.remove_from_skip_list(last['word'])
         elif last['type'] == 'Add to Dictionary':
             self.editor.remove_from_dictionary(last['word'])
+        elif last['type'] == 'Change All':
+            self.editor.undo()
         elif last['type'] == 'Change':
             pass # Standard internal undo chain would handle this
             
@@ -3101,26 +3224,15 @@ class SpellCheckDialog(QDialog):
         self.next_error()
 
     def on_use_always(self):
-        # Global replace logic
+        """Replace every whole-word instance, preserving each one's casing."""
         old_word = self.current_error['word']
         new_word = self.word_edit.text()
         if self.sugg_list.currentItem() and new_word == old_word:
-             new_word = self.sugg_list.currentItem().text()
-             
-        cursor = self.editor.textCursor()
-        cursor.beginEditBlock()
-        doc = self.editor.document()
-        search_cursor = QTextCursor(doc)
-        count = 0
-        while True:
-            found_cursor = doc.find(old_word, search_cursor, QTextDocument.FindFlag.FindWholeWords)
-            if found_cursor.isNull(): break
-            found_cursor.insertText(new_word)
-            search_cursor = found_cursor
-            count += 1
-        cursor.endEditBlock()
-        
-        self.add_history("Change All", old_word, f"Replaced {count} instances of '{old_word}'")
+            new_word = self.sugg_list.currentItem().text()
+
+        count = self.editor.replace_all_words(old_word, new_word)
+        self.add_history("Change All", old_word,
+                         f"Replaced {count} instances of '{old_word}'")
         self.next_error()
 
     def on_skip(self):
