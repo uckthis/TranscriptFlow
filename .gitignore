@@ -52,3 +52,5 @@ Desktop.ini
 # Local Config (Keep as template if needed, but ignore local changes)
 config.json
 .workbuddy-ai/
+user_config_backup.json
+*.backup*

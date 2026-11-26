@@ -1,3 +1,23 @@
+# Release v1.1.8 (Current Line Highlight, Dedicated Editor Settings & Auto-Scroll Polish)
+
+This release introduces a fully customizable current line indicator, a dedicated Editor tab in Preferences with settings export/import, and major stability refinements to the auto-scroll engine.
+
+## 🎯 Current Line Indicator & Highlight
+- **Multiple Visual Styles**: Highlight your active editing line using **Background Tint**, **Left Gutter Rail**, **Frame Outline**, **Underline**, or **Combined (Rail + Background)**.
+- **Customizable Appearance**: Choose between theme-adaptive accent colors or custom color pickers, adjust opacity (1% to 100%), select rail width and shape (rounded pill or sharp rectangle).
+- **Intelligent Visibility**: Options to restrict highlighting to active editor focus or hide it during multi-line text selections.
+
+## ⚙️ Dedicated Editor Tab & Settings Backup / Restore
+- **Organized Preferences**: All text editing features (Smart Typing, Current Line Highlight, Auto-Scroll lookahead, and Bottom Overscroll Padding) are now unified under a dedicated **Editor** tab in **Edit > Options...**.
+- **Export & Import Settings**: Easily export your entire TranscriptFlow configuration (shortcuts, snippets, custom themes, formatting preferences) to a portable JSON file, and import them with automated backup and validation.
+
+## 📜 Auto-Scroll & Selection Guards
+- **Selection-Aware Auto-Scroll**: Auto-scroll intelligently pauses while selecting text with the mouse or Shift+Arrows, preventing view jumps during drag operations.
+- **Configurable Lookahead & Bottom Padding**: Adjust the number of lines visible ahead and customize bottom overscroll padding (20% to 90%).
+- **Relayout Stabilization**: Fixed scroll jitter and top-of-page jumps during rapid typing or pressing Enter.
+
+---
+
 # Release v1.1.7 (Smart Typing, Work Time Tracking & Enhanced Workflow)
 
 This update introduces intelligent auto-capitalization (Smart Typing), live session and file active time tracking, case-preserving bulk spell check corrections, plain text paste options, and smooth auto-scrolling with typewriter mode.

@@ -12,13 +12,16 @@ import subprocess
 import re
 import os
 import shutil
+import copy
+import json
+import datetime
 from ocr_engine import (is_tesseract_installed, get_installed_tesseract_langs, 
                         TESS_LANG_MAP, get_lang_name, get_lang_code, get_tesseract_version)
 import smart_typing
 from ocr_downloader import download_tesseract, download_language
 
 # Configure enchant to use AppData dicts folder BEFORE importing enchant
-from path_manager import get_dicts_dir
+from path_manager import get_dicts_dir, get_config_path
 _dicts_path = get_dicts_dir()
 os.environ["DICPATH"] = _dicts_path
 
@@ -2059,6 +2062,7 @@ class SmartTriggerChip(QFrame):
         self.setFixedSize(110, 52)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._checked = False
+        self._group = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 4, 2, 4)
@@ -2088,8 +2092,17 @@ class SmartTriggerChip(QFrame):
             style.polish(widget)
         self.update()
 
+    def setExclusiveGroup(self, group):
+        self._group = group
+
     def mousePressEvent(self, event):
+        if self._group is not None and self._checked:
+            return
         self.setChecked(not self._checked)
+        if self._checked and self._group:
+            for other in self._group:
+                if other is not self:
+                    other.setChecked(False)
         event.accept()
 
 
@@ -2104,6 +2117,7 @@ class PreferencesDialog(QDialog):
             self.setMaximumHeight(available.height() - 20)
         self.config = config
         self.defaults = defaults
+        self._imported_config = None
         
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -2145,69 +2159,6 @@ class PreferencesDialog(QDialog):
         as_layout.addWidget(QLabel("min"))
         as_layout.addStretch()
         gen_layout.addLayout(as_layout)
-
-        add_sep(gen_layout)
-
-        # Smart Typing & Formatting - kept deliberately compact
-        smart_conf = self.config['settings'].get('smart_typing', {})
-        if not isinstance(smart_conf, dict):
-            smart_conf = {}
-        smart_group = QGroupBox("Smart Typing & Formatting")
-        smart_layout = QVBoxLayout(smart_group)
-        smart_layout.setSpacing(2)
-        self.smart_checks = {}
-
-        master_row = QHBoxLayout()
-        enabled_check = QCheckBox("Enable Smart Typing")
-        enabled_check.setToolTip("Same as the Smart Typing button in Zone C.")
-        enabled_check.setChecked(bool(smart_conf.get(
-            'enabled', smart_typing.DEFAULT_RULES['enabled'])))
-        master_row.addWidget(enabled_check)
-        master_row.addStretch()
-        smart_layout.addLayout(master_row)
-        self.smart_checks['enabled'] = enabled_check
-
-        after_label = QLabel("Capitalize after:")
-        after_label.setStyleSheet(
-            "color: #64748b; font-size: 12px; font-weight: 500;")
-        smart_layout.addWidget(after_label)
-
-        chip_row = QHBoxLayout()
-        chip_row.setSpacing(8)
-        for key, symbol, caption, tip in (
-                ('capitalize_after_period', '.', 'Period', 'period'),
-                ('capitalize_after_question', '?', 'Question', 'question mark'),
-                ('capitalize_after_exclamation', '!', 'Exclaim', 'exclamation mark'),
-                ('capitalize_after_newline', '↵', 'New line', 'line break'),
-                ('capitalize_after_ellipsis', '...', 'Ellipsis',
-                 'ellipsis (checked = cap, unchecked = no cap / uncap)')):
-            chip = SmartTriggerChip(
-                symbol, caption, "Capitalize after a " + tip,
-                bool(smart_conf.get(key, smart_typing.DEFAULT_RULES[key])),
-                self)
-            chip_row.addWidget(chip)
-            self.smart_checks[key] = chip
-        chip_row.addStretch()
-        smart_layout.addLayout(chip_row)
-
-        custom_row = QHBoxLayout()
-        custom_row.addWidget(QLabel("Other triggers:"))
-        self.smart_custom_edit = QLineEdit()
-        self.smart_custom_edit.setPlaceholderText("e.g. --, :, ~")
-        self.smart_custom_edit.setToolTip(
-            "Comma-separated triggers; each can be one or more characters. "
-            "Capitalization happens when the whole sequence is typed.")
-        raw_custom = smart_conf.get('custom_triggers', '')
-        self.smart_custom_edit.setText(raw_custom if isinstance(raw_custom, str) else '')
-        custom_row.addWidget(self.smart_custom_edit)
-        smart_layout.addLayout(custom_row)
-
-        smart_note = QLabel(
-            "'...' checkbox: on = caps after ellipsis, off = no caps / uncap. "
-            "Two dots still caps.")
-        smart_note.setStyleSheet("color: #888888; font-size: 11px;")
-        smart_layout.addWidget(smart_note)
-        gen_layout.addWidget(smart_group)
 
         add_sep(gen_layout)
 
@@ -2342,21 +2293,217 @@ class PreferencesDialog(QDialog):
         scaling_layout.addWidget(self.scaling_combo)
         scaling_layout.addStretch()
         gen_layout.addLayout(scaling_layout)
-        
+
         add_sep(gen_layout)
         
         gen_layout.addStretch()
-        
-        # --- TAB 2: New Document ---
+
+        # --- TAB 2: Editor ---
+        self.tab_editor = QWidget()
+        ed_layout = QVBoxLayout(self.tab_editor)
+        ed_layout.setSpacing(10)
+        editor_ui = self.config.get('ui', {})
+        smart_conf = self.config['settings'].get('smart_typing', {})
+        if not isinstance(smart_conf, dict):
+            smart_conf = {}
+
+        smart_group = QGroupBox("Smart Typing & Formatting")
+        smart_layout = QVBoxLayout(smart_group)
+        smart_layout.setSpacing(2)
+        self.smart_checks = {}
+
+        master_row = QHBoxLayout()
+        enabled_check = QCheckBox("Enable Smart Typing")
+        enabled_check.setToolTip("Same as the Smart Typing button in Zone C.")
+        enabled_check.setChecked(bool(smart_conf.get(
+            'enabled', smart_typing.DEFAULT_RULES['enabled'])))
+        master_row.addWidget(enabled_check)
+        master_row.addStretch()
+        smart_layout.addLayout(master_row)
+        self.smart_checks['enabled'] = enabled_check
+
+        after_label = QLabel("Capitalize after:")
+        after_label.setStyleSheet(
+            "color: #64748b; font-size: 12px; font-weight: 500;")
+        smart_layout.addWidget(after_label)
+
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(8)
+        for key, symbol, caption, tip in (
+                ('capitalize_after_period', '.', 'Period', 'period'),
+                ('capitalize_after_question', '?', 'Question', 'question mark'),
+                ('capitalize_after_exclamation', '!', 'Exclaim', 'exclamation mark'),
+                ('capitalize_after_newline', '↵', 'New line', 'line break'),
+                ('capitalize_after_ellipsis', '...', 'Ellipsis',
+                 'ellipsis (checked = cap, unchecked = no cap / uncap)')):
+            chip = SmartTriggerChip(
+                symbol, caption, "Capitalize after a " + tip,
+                bool(smart_conf.get(key, smart_typing.DEFAULT_RULES[key])),
+                self)
+            chip_row.addWidget(chip)
+            self.smart_checks[key] = chip
+        chip_row.addStretch()
+        smart_layout.addLayout(chip_row)
+
+        custom_row = QHBoxLayout()
+        custom_row.addWidget(QLabel("Other triggers:"))
+        self.smart_custom_edit = QLineEdit()
+        self.smart_custom_edit.setPlaceholderText("e.g. --, :, ~")
+        self.smart_custom_edit.setToolTip(
+            "Comma-separated triggers; each can be one or more characters. "
+            "Capitalization happens when the whole sequence is typed.")
+        raw_custom = smart_conf.get('custom_triggers', '')
+        self.smart_custom_edit.setText(raw_custom if isinstance(raw_custom, str) else '')
+        custom_row.addWidget(self.smart_custom_edit)
+        smart_layout.addLayout(custom_row)
+
+        smart_note = QLabel(
+            "'...' checkbox: on = caps after ellipsis, off = no caps / uncap. "
+            "Two dots still caps.")
+        smart_note.setStyleSheet("color: #888888; font-size: 11px;")
+        smart_layout.addWidget(smart_note)
+        ed_layout.addWidget(smart_group)
+
+        add_sep(ed_layout)
+
+        cl_group = QGroupBox("Current line indicator")
+        cl_form = QFormLayout(cl_group)
+        cl_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        cl_form.setSpacing(8)
+
+        self.cl_enabled = QCheckBox("Highlight current line")
+        self.cl_enabled.setChecked(bool(editor_ui.get('current_line_enabled', True)))
+        cl_form.addRow("", self.cl_enabled)
+
+        style_row = QHBoxLayout()
+        style_row.setSpacing(8)
+        self.cl_style_chips = {}
+        current_style = editor_ui.get('current_line_style', 'background')
+        for key, caption, tip in (
+                ('background', 'Background', 'Faint highlight behind the current line'),
+                ('rail', 'Left rail', 'Small marker at the left edge of the line'),
+                ('both', 'Both', 'Background band and left rail together')):
+            chip = SmartTriggerChip('', caption, tip, key == current_style, self)
+            chip.symbol_label.hide()
+            chip.setFixedSize(100, 34)
+            style_row.addWidget(chip)
+            self.cl_style_chips[key] = chip
+        chips = list(self.cl_style_chips.values())
+        for chip in chips:
+            chip.setExclusiveGroup(chips)
+        style_row.addStretch()
+        cl_form.addRow("Style:", style_row)
+
+        self.cl_scope = QComboBox()
+        self.cl_scope.addItem("Visual line", 'line')
+        self.cl_scope.addItem("Paragraph", 'paragraph')
+        scope = editor_ui.get('current_line_scope', 'line')
+        self.cl_scope.setCurrentIndex(1 if scope == 'paragraph' else 0)
+        cl_form.addRow("Highlight:", self.cl_scope)
+
+        self.cl_opacity = QSpinBox()
+        self.cl_opacity.setRange(5, 25)
+        self.cl_opacity.setSuffix(" %")
+        self.cl_opacity.setValue(int(editor_ui.get('current_line_opacity', 12)))
+        cl_form.addRow("Background opacity:", self.cl_opacity)
+
+        self.cl_color_mode = QComboBox()
+        self.cl_color_mode.addItem("Theme accent", 'theme')
+        self.cl_color_mode.addItem("Custom color", 'custom')
+        bg_mode = editor_ui.get('current_line_color_mode', 'theme')
+        self.cl_color_mode.setCurrentIndex(1 if bg_mode == 'custom' else 0)
+        self.current_line_color = editor_ui.get('current_line_color', '') or '#378ADD'
+        self.cl_color_btn = QPushButton()
+        self.cl_color_btn.setFixedSize(60, 25)
+        self.cl_color_btn.clicked.connect(self.pick_current_line_color)
+        self.cl_color_btn.setStyleSheet(
+            f"background: {self.current_line_color}; border: 1px solid #94a3b8;")
+        color_row = QHBoxLayout()
+        color_row.addWidget(self.cl_color_mode)
+        color_row.addWidget(self.cl_color_btn)
+        cl_form.addRow("Background color:", color_row)
+
+        self.cl_focus_only = QCheckBox("Only when editor has focus")
+        self.cl_focus_only.setChecked(
+            bool(editor_ui.get('current_line_focus_only', True)))
+        cl_form.addRow("", self.cl_focus_only)
+        self.cl_hide_selection = QCheckBox("Hide while selecting text")
+        self.cl_hide_selection.setChecked(
+            bool(editor_ui.get('current_line_hide_selection', True)))
+        cl_form.addRow("", self.cl_hide_selection)
+
+        self.cl_shape = QComboBox()
+        for label, key in (('Solid bar', 'solid'), ('Rounded bar', 'rounded'),
+                           ('Short tick', 'tick'), ('Arrowhead', 'arrow')):
+            self.cl_shape.addItem(label, key)
+        shape = editor_ui.get('current_line_rail_shape', 'solid')
+        idx = self.cl_shape.findData(shape)
+        self.cl_shape.setCurrentIndex(max(0, idx))
+        cl_form.addRow("Rail shape:", self.cl_shape)
+
+        self.cl_rail_width = QSpinBox()
+        self.cl_rail_width.setRange(2, 8)
+        self.cl_rail_width.setSuffix(" px")
+        self.cl_rail_width.setValue(int(editor_ui.get('current_line_rail_width', 3)))
+        cl_form.addRow("Rail width:", self.cl_rail_width)
+
+        self.cl_rail_color_mode = QComboBox()
+        self.cl_rail_color_mode.addItem("Theme accent", 'theme')
+        self.cl_rail_color_mode.addItem("Custom color", 'custom')
+        rail_mode = editor_ui.get('current_line_rail_color_mode', 'theme')
+        self.cl_rail_color_mode.setCurrentIndex(1 if rail_mode == 'custom' else 0)
+        self.current_line_rail_color = editor_ui.get('current_line_rail_color', '') or '#378ADD'
+        self.cl_rail_color_btn = QPushButton()
+        self.cl_rail_color_btn.setFixedSize(60, 25)
+        self.cl_rail_color_btn.clicked.connect(self.pick_current_line_rail_color)
+        self.cl_rail_color_btn.setStyleSheet(
+            f"background: {self.current_line_rail_color}; border: 1px solid #94a3b8;")
+        rail_color_row = QHBoxLayout()
+        rail_color_row.addWidget(self.cl_rail_color_mode)
+        rail_color_row.addWidget(self.cl_rail_color_btn)
+        cl_form.addRow("Rail color:", rail_color_row)
+
+        ed_layout.addWidget(cl_group)
+
+        auto_group = QGroupBox("Auto scroll")
+        auto_layout = QVBoxLayout(auto_group)
+        self.as_pause_selecting = QCheckBox("Pause while selecting text")
+        self.as_pause_selecting.setChecked(
+            bool(editor_ui.get('auto_scroll_pause_selecting', True)))
+        self.as_pause_selecting.setToolTip(
+            "Suspends auto-scroll during mouse drags, active selections, "
+            "and while Shift or Ctrl is held")
+        auto_layout.addWidget(self.as_pause_selecting)
+        ed_layout.addWidget(auto_group)
+
+        add_sep(ed_layout)
+
+        padding_layout = QHBoxLayout()
+        padding_layout.addWidget(QLabel("Editor bottom padding:"))
+        self.bottom_padding_spin = QSpinBox()
+        self.bottom_padding_spin.setRange(0, 40)
+        self.bottom_padding_spin.setSuffix(" %")
+        self.bottom_padding_spin.setValue(
+            editor_ui.get('bottom_padding_percent', 25))
+        self.bottom_padding_spin.setToolTip(
+            "Extra space below the last line, as a percent of the editor height")
+        padding_layout.addWidget(self.bottom_padding_spin)
+        padding_layout.addStretch()
+        ed_layout.addLayout(padding_layout)
+
+        ed_layout.addStretch()
+
+        # --- TAB 3: New Document ---
         self.tab_newdoc = QWidget()
         nd_layout = QVBoxLayout(self.tab_newdoc)
         self.ts_widget = TranscriptSettingsWidget(self, self.config['settings'], self.defaults)
         nd_layout.addWidget(self.ts_widget)
         
         self.tabs.addTab(self.tab_general, "General")
+        self.tabs.addTab(self.tab_editor, "Editor")
         self.tabs.addTab(self.tab_newdoc, "New Document")
 
-        # --- TAB 3: OCR ---
+        # --- TAB 4: OCR ---
         self.tab_ocr = QWidget()
         ocr_layout = QVBoxLayout(self.tab_ocr)
         ocr_form = QFormLayout()
@@ -2447,12 +2594,138 @@ class PreferencesDialog(QDialog):
         self.btn_edit_sc = QPushButton("Edit Shortcuts...")
         self.btn_edit_sc.clicked.connect(self.on_edit_shortcuts)
         bot_layout.addWidget(self.btn_edit_sc)
+        self.btn_export_settings = QPushButton("Export Settings...")
+        self.btn_export_settings.clicked.connect(self.export_settings)
+        self.btn_import_settings = QPushButton("Import Settings...")
+        self.btn_import_settings.clicked.connect(self.import_settings)
+        bot_layout.addWidget(self.btn_export_settings)
+        bot_layout.addWidget(self.btn_import_settings)
         bot_layout.addStretch()
         
         self.btn_ok = QPushButton("OK"); self.btn_ok.setDefault(True); self.btn_ok.clicked.connect(self.accept)
         self.btn_can = QPushButton("Cancel"); self.btn_can.clicked.connect(self.reject)
         bot_layout.addWidget(self.btn_ok); bot_layout.addWidget(self.btn_can)
         layout.addLayout(bot_layout)
+
+    @staticmethod
+    def _deep_merge_config(target, source):
+        for key, value in source.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                PreferencesDialog._deep_merge_config(target[key], value)
+            else:
+                target[key] = copy.deepcopy(value)
+
+    def export_settings(self):
+        config = self.get_config()
+        last_dir = self.config.get('last_export_dir', os.path.expanduser('~'))
+        default_name = ("TranscriptFlow-settings-" +
+                        datetime.datetime.now().strftime('%Y%m%d-%H%M') + ".json")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export settings",
+            os.path.join(last_dir, default_name),
+            "JSON files (*.json);;All files (*)")
+        if not path:
+            return
+        if not path.lower().endswith('.json'):
+            path += '.json'
+        try:
+            with open(path, 'w', encoding='utf-8') as handle:
+                json.dump(config, handle, indent=2, ensure_ascii=False)
+            self.config['last_export_dir'] = os.path.dirname(path)
+            QMessageBox.information(
+                self, "Export settings",
+                "Settings exported successfully.")
+        except Exception as error:
+            QMessageBox.warning(
+                self, "Export settings",
+                f"Could not export settings:\n{error}")
+
+    def import_settings(self):
+        last_dir = self.config.get('last_export_dir', os.path.expanduser('~'))
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import settings", last_dir,
+            "JSON files (*.json);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as handle:
+                loaded = json.load(handle)
+        except Exception as error:
+            QMessageBox.warning(
+                self, "Import settings",
+                f"Could not read that file:\n{error}")
+            return
+        if not isinstance(loaded, dict):
+            QMessageBox.warning(
+                self, "Import settings", "That file is not a settings file.")
+            return
+        for key in ('settings', 'ui', 'playback', 'ocr'):
+            if key in loaded and not isinstance(loaded[key], dict):
+                QMessageBox.warning(
+                    self, "Import settings",
+                    f"Invalid settings section: {key}")
+                return
+        for key in ('shortcuts', 'snippets', 'recent_files'):
+            if key in loaded and not isinstance(loaded[key], list):
+                QMessageBox.warning(
+                    self, "Import settings",
+                    f"Invalid settings section: {key}")
+                return
+        if not any(key in loaded for key in (
+                'settings', 'ui', 'playback', 'ocr', 'shortcuts', 'snippets')):
+            QMessageBox.warning(
+                self, "Import settings",
+                "That file does not contain TranscriptFlow settings.")
+            return
+
+        merged = copy.deepcopy(self.config)
+        self._deep_merge_config(merged, loaded)
+        shortcut_count = len(merged.get('shortcuts', []))
+        snippet_count = len(merged.get('snippets', []))
+        reply = QMessageBox.question(
+            self, "Import settings",
+            "Replace current settings with this file?\n\n"
+            f"Shortcuts: {shortcut_count}\n"
+            f"Snippets: {snippet_count}\n\n"
+            "Your current on-disk settings will be backed up first.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        config_path = get_config_path()
+        if os.path.exists(config_path):
+            stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+            backup_path = f"{config_path}.backup-{stamp}"
+            try:
+                shutil.copy2(config_path, backup_path)
+            except Exception as error:
+                QMessageBox.warning(
+                    self, "Import settings",
+                    f"Backup failed, import cancelled:\n{error}")
+                return
+
+        self._imported_config = merged
+        QMessageBox.information(
+            self, "Import settings",
+            "Settings imported. Click OK to apply and save.")
+        self.accept()
+
+    def pick_current_line_color(self):
+        color = QColorDialog.getColor(
+            QColor(self.current_line_color), self, "Select background color")
+        if color.isValid():
+            self.current_line_color = color.name()
+            self.cl_color_btn.setStyleSheet(
+                f"background: {self.current_line_color}; border: 1px solid #94a3b8;")
+
+    def pick_current_line_rail_color(self):
+        color = QColorDialog.getColor(
+            QColor(self.current_line_rail_color), self, "Select rail color")
+        if color.isValid():
+            self.current_line_rail_color = color.name()
+            self.cl_rail_color_btn.setStyleSheet(
+                f"background: {self.current_line_rail_color}; "
+                "border: 1px solid #94a3b8;")
 
     def pick_tc_color(self):
         c = QColorDialog.getColor(QColor(self.current_tc_color), self, "Select Timecode Color")
@@ -2481,6 +2754,8 @@ class PreferencesDialog(QDialog):
                 QMessageBox.warning(self, "Clear Cache", "Failed to clear some cache files.")
 
     def get_config(self):
+        if getattr(self, '_imported_config', None) is not None:
+            return self._imported_config
         self.ts_widget.sync_settings()
         self.config['backup_interval'] = self.backup_interval.value()
         self.config['default_window_size'] = [self.win_w.value(), self.win_h.value()]
@@ -2499,6 +2774,24 @@ class PreferencesDialog(QDialog):
         self.config['playback']['preferred_player'] = players[self.player_combo.currentIndex()]
         
         self.config['ui']['player_scaling_behavior'] = self.scaling_combo.currentData()
+        self.config['ui']['bottom_padding_percent'] = self.bottom_padding_spin.value()
+        current_style = next(
+            (key for key, chip in self.cl_style_chips.items()
+             if chip.isChecked()), 'background')
+        self.config['ui']['current_line_enabled'] = self.cl_enabled.isChecked()
+        self.config['ui']['current_line_style'] = current_style
+        self.config['ui']['current_line_scope'] = self.cl_scope.currentData()
+        self.config['ui']['current_line_opacity'] = self.cl_opacity.value()
+        self.config['ui']['current_line_color_mode'] = self.cl_color_mode.currentData()
+        self.config['ui']['current_line_color'] = self.current_line_color
+        self.config['ui']['current_line_focus_only'] = self.cl_focus_only.isChecked()
+        self.config['ui']['current_line_hide_selection'] = self.cl_hide_selection.isChecked()
+        self.config['ui']['current_line_rail_shape'] = self.cl_shape.currentData()
+        self.config['ui']['current_line_rail_width'] = self.cl_rail_width.value()
+        self.config['ui']['current_line_rail_color_mode'] = self.cl_rail_color_mode.currentData()
+        self.config['ui']['current_line_rail_color'] = self.current_line_rail_color
+        self.config['ui']['auto_scroll_pause_selecting'] = (
+            self.as_pause_selecting.isChecked())
         self.config['autoplay_on_load'] = self.autoplay_check.isChecked()
         self.config['auto_generate_waveform'] = self.auto_wf_check.isChecked()
         

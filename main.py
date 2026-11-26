@@ -91,7 +91,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QMessageBox, QSplitter, QLabel, QFrame, QDockWidget,
                              QInputDialog, QTextBrowser, QDialog, QProgressDialog,
                              QToolBar, QColorDialog, QFontComboBox, QComboBox, QGridLayout, QSizePolicy, QMenu, QToolButton,
-                             QSplashScreen)
+                             QSplashScreen, QWidgetAction, QSpinBox)
 from PyQt6.QtCore import Qt, QUrl, QTimer, QCoreApplication, QByteArray, QRegularExpression, QLocale, QRect, QPointF, QEvent
 from PyQt6.QtGui import (QAction, QIcon, QKeySequence, QActionGroup, QFont, QColor,
                          QTextCharFormat, QFontDatabase, QTextCursor, QPixmap, QPainter, QLinearGradient, QBrush,
@@ -395,8 +395,23 @@ class MainWindow(QMainWindow):
                 'left_splitter_state': None,
                 'player_scaling_behavior': 'proportional',
                 'auto_scroll': False,
-                'auto_scroll_mode': 'smart_margin',
-                'scroll_past_end': True
+                'auto_scroll_lines': 6,
+                'auto_scroll_pause_manual': False,
+                'auto_scroll_type_only': False,
+                'auto_scroll_pause_selecting': True,
+                'bottom_padding_percent': 25,
+                'current_line_enabled': True,
+                'current_line_style': 'background',
+                'current_line_scope': 'line',
+                'current_line_opacity': 12,
+                'current_line_color_mode': 'theme',
+                'current_line_color': '',
+                'current_line_focus_only': True,
+                'current_line_hide_selection': True,
+                'current_line_rail_shape': 'solid',
+                'current_line_rail_width': 3,
+                'current_line_rail_color_mode': 'theme',
+                'current_line_rail_color': ''
             },
             'playback': {
                 'volume': 36,
@@ -452,8 +467,23 @@ class MainWindow(QMainWindow):
         self.current_theme = self.config['ui'].get('theme', 'Light')
         self.rtl_mode = self.config['ui'].get('rtl_mode', False)
         self.auto_scroll_enabled = self.config['ui'].get('auto_scroll', False)
-        self.auto_scroll_mode = self.config['ui'].get('auto_scroll_mode', 'smart_margin')
-        self.scroll_past_end = self.config['ui'].get('scroll_past_end', True)
+        self.auto_scroll_lines = self.config['ui'].get('auto_scroll_lines', 6)
+        self.auto_scroll_pause_manual = self.config['ui'].get('auto_scroll_pause_manual', False)
+        self.auto_scroll_type_only = self.config['ui'].get('auto_scroll_type_only', False)
+        self.auto_scroll_pause_selecting = self.config['ui'].get('auto_scroll_pause_selecting', True)
+        self.bottom_padding_percent = self.config['ui'].get('bottom_padding_percent', 25)
+        self.current_line_enabled = self.config['ui'].get('current_line_enabled', True)
+        self.current_line_style = self.config['ui'].get('current_line_style', 'background')
+        self.current_line_scope = self.config['ui'].get('current_line_scope', 'line')
+        self.current_line_opacity = self.config['ui'].get('current_line_opacity', 12)
+        self.current_line_color_mode = self.config['ui'].get('current_line_color_mode', 'theme')
+        self.current_line_color = self.config['ui'].get('current_line_color', '')
+        self.current_line_focus_only = self.config['ui'].get('current_line_focus_only', True)
+        self.current_line_hide_selection = self.config['ui'].get('current_line_hide_selection', True)
+        self.current_line_rail_shape = self.config['ui'].get('current_line_rail_shape', 'solid')
+        self.current_line_rail_width = self.config['ui'].get('current_line_rail_width', 3)
+        self.current_line_rail_color_mode = self.config['ui'].get('current_line_rail_color_mode', 'theme')
+        self.current_line_rail_color = self.config['ui'].get('current_line_rail_color', '')
         
         # Playback settings
         self.playback_config = self.config.get('playback', {
@@ -715,17 +745,24 @@ class MainWindow(QMainWindow):
         # The 1st value (10) below is the left margin (editor side of the gap)
         self.right_layout.setContentsMargins(10,0,10,10) 
         self.editor = TranscriptEditor(self.shortcuts, self.snippets, self.settings)
-        self.editor.set_auto_scroll(self.auto_scroll_enabled, self.auto_scroll_mode, self.scroll_past_end)
+        self.editor.set_auto_scroll(
+            self.auto_scroll_enabled, self.auto_scroll_lines,
+            self.auto_scroll_pause_manual,
+            self.auto_scroll_type_only, self.bottom_padding_percent,
+            self.auto_scroll_pause_selecting)
+        self._apply_current_line_settings()
         # Note: Connection is handled in __init__ after init_ui
         self.editor.seekRequested.connect(self.engine.seek)
         self.editor.commandTriggered.connect(self.handle_command)
         self.editor.snippetTriggered.connect(self.handle_snippet)
         self.editor.settingsChanged.connect(self.handle_editor_settings_change)
         self.editor.document().contentsChanged.connect(self._update_status_word_count)
+        self._install_follow_diagnostics_shortcut()
         self.right_layout.addWidget(self.editor)
-        
+
         self.main_splitter.addWidget(self.left_panel); self.main_splitter.addWidget(self.right_panel)
         self.main_splitter.setHandleWidth(8)
+        self._follow_diag_visible = False
         self.main_splitter.setStyleSheet("QSplitter::handle { background: transparent; }") # INVISIBLE HANDLE
         self.main_splitter.setStretchFactor(0, 1); self.main_splitter.setStretchFactor(1, 2)
 
@@ -795,39 +832,49 @@ class MainWindow(QMainWindow):
         self.btn_ribbon_autoscroll = RibbonSplitButton("📜 Auto Scroll")
         self.btn_ribbon_autoscroll.setCheckable(True)
         self.btn_ribbon_autoscroll.setChecked(self.auto_scroll_enabled)
+        self.btn_ribbon_autoscroll.setShortcut(QKeySequence("Ctrl+Alt+A"))
         self.btn_ribbon_autoscroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_ribbon_autoscroll.setToolTip(
-            "Auto Scroll - click to toggle, arrow to pick the scroll mode")
+            "Auto Scroll - click to toggle, arrow for lines ahead and options")
         self.btn_ribbon_autoscroll.clicked.connect(self.toggle_autoscroll)
 
         autoscroll_menu = QMenu(self)
-        self.autoscroll_mode_group = QActionGroup(self)
-        self.autoscroll_mode_group.setExclusive(True)
+        autoscroll_menu.aboutToShow.connect(self.refresh_autoscroll_menu)
 
-        mode_actions = [
-            ("Smart Margin (Keep 5-8 lines ahead)", "smart_margin"),
-            ("Typewriter Mode (Center cursor)", "typewriter"),
-            ("Advance Bump (Scroll near bottom)", "advance_bump")
-        ]
-        self.autoscroll_menu_actions = {}
-        for label, mode_key in mode_actions:
-            act = QAction(label, self)
-            act.setCheckable(True)
-            act.setData(mode_key)
-            if mode_key == self.auto_scroll_mode:
-                act.setChecked(True)
-            act.triggered.connect(lambda chk, m=mode_key: self.set_autoscroll_mode(m))
-            self.autoscroll_mode_group.addAction(act)
-            autoscroll_menu.addAction(act)
-            self.autoscroll_menu_actions[mode_key] = act
+        lines_widget = QWidget()
+        lines_layout = QHBoxLayout(lines_widget)
+        lines_layout.setContentsMargins(8, 3, 8, 3)
+        lines_layout.setSpacing(8)
+        lines_layout.addWidget(QLabel("Lines ahead:"))
+        self.autoscroll_lines_spin = QSpinBox()
+        self.autoscroll_lines_spin.setRange(3, self.editor.max_lines_ahead())
+        self.autoscroll_lines_spin.setValue(self.auto_scroll_lines)
+        self.autoscroll_lines_spin.setFixedWidth(70)
+        self.autoscroll_lines_spin.setToolTip(
+            "Maximum is 85% of the visible lines at the current window size")
+        self.autoscroll_lines_spin.valueChanged.connect(self.set_autoscroll_lines)
+        lines_layout.addWidget(self.autoscroll_lines_spin)
+        lines_action = QWidgetAction(self)
+        lines_action.setDefaultWidget(lines_widget)
+        autoscroll_menu.addAction(lines_action)
 
         autoscroll_menu.addSeparator()
 
-        self.act_scroll_past_end = QAction("Scroll Past End of Document", self)
-        self.act_scroll_past_end.setCheckable(True)
-        self.act_scroll_past_end.setChecked(self.scroll_past_end)
-        self.act_scroll_past_end.triggered.connect(self.toggle_scroll_past_end)
-        autoscroll_menu.addAction(self.act_scroll_past_end)
+        self.act_autoscroll_pause_manual = QAction(
+            "Pause after manual scroll", self)
+        self.act_autoscroll_pause_manual.setCheckable(True)
+        self.act_autoscroll_pause_manual.setChecked(
+            self.auto_scroll_pause_manual)
+        self.act_autoscroll_pause_manual.triggered.connect(
+            self.set_autoscroll_pause_manual)
+        autoscroll_menu.addAction(self.act_autoscroll_pause_manual)
+
+        self.act_autoscroll_type_only = QAction("Type-only trigger", self)
+        self.act_autoscroll_type_only.setCheckable(True)
+        self.act_autoscroll_type_only.setChecked(self.auto_scroll_type_only)
+        self.act_autoscroll_type_only.triggered.connect(
+            self.set_autoscroll_type_only)
+        autoscroll_menu.addAction(self.act_autoscroll_type_only)
 
         self.btn_ribbon_autoscroll.setMenu(autoscroll_menu)
         zone_a_layout.addWidget(self.btn_ribbon_autoscroll)
@@ -1774,6 +1821,10 @@ class MainWindow(QMainWindow):
         # Force redraw
         self.update()
         
+        # Current-line indicator follows the active theme accent
+        if hasattr(self, 'editor'):
+            self.editor.set_current_line_theme_color(theme['accent'])
+
         # Force editor to update
         self.editor.setStyleSheet(self.editor.styleSheet())
 
@@ -2205,37 +2256,6 @@ class MainWindow(QMainWindow):
         
         view_menu.addSeparator()
 
-        # --- Auto Scroll Submenu ---
-        autoscroll_view_menu = view_menu.addMenu("Auto Scroll")
-
-        self.act_view_autoscroll = QAction("Enable Auto Scroll", self)
-        self.act_view_autoscroll.setCheckable(True)
-        self.act_view_autoscroll.setShortcut(QKeySequence("Ctrl+Alt+A"))
-        self.act_view_autoscroll.setChecked(self.auto_scroll_enabled)
-        self.act_view_autoscroll.triggered.connect(self.toggle_autoscroll)
-        autoscroll_view_menu.addAction(self.act_view_autoscroll)
-        autoscroll_view_menu.addSeparator()
-
-        self.view_autoscroll_group = QActionGroup(self)
-        self.view_autoscroll_group.setExclusive(True)
-        for label, mode_key in [("Smart Margin (Keep 5-8 lines ahead)", "smart_margin"),
-                                ("Typewriter Mode (Center cursor)", "typewriter"),
-                                ("Advance Bump (Scroll near bottom)", "advance_bump")]:
-            act = QAction(label, self)
-            act.setCheckable(True)
-            if mode_key == self.auto_scroll_mode:
-                act.setChecked(True)
-            act.triggered.connect(lambda chk, m=mode_key: self.set_autoscroll_mode(m))
-            self.view_autoscroll_group.addAction(act)
-            autoscroll_view_menu.addAction(act)
-
-        autoscroll_view_menu.addSeparator()
-        self.act_view_scroll_past_end = QAction("Scroll Past End of Document", self)
-        self.act_view_scroll_past_end.setCheckable(True)
-        self.act_view_scroll_past_end.setChecked(self.scroll_past_end)
-        self.act_view_scroll_past_end.triggered.connect(self.toggle_scroll_past_end)
-        autoscroll_view_menu.addAction(self.act_view_scroll_past_end)
-        
         view_menu.addSeparator()
 
         # ==================== MEDIA MENU ====================
@@ -3251,8 +3271,33 @@ class MainWindow(QMainWindow):
         from dialogs import PreferencesDialog
         dlg = PreferencesDialog(self, self.config, app_defaults)
         if dlg.exec():
+            imported = getattr(dlg, '_imported_config', None) is not None
             # Get updated config
             self.config = dlg.get_config()
+
+            # Apply values that may have come from an imported settings file
+            self.shortcuts = self.config.get('shortcuts', self.shortcuts)
+            self.snippets = self.config.get('snippets', self.snippets)
+            self.editor.shortcuts = self.shortcuts
+            self.editor.snippets = self.snippets
+            self.recent_files = self.config.get('recent_files', self.recent_files)
+            ui_conf = self.config.get('ui', {})
+            for key in ('show_timeline', 'show_remote', 'show_playrate',
+                        'show_volume', 'show_waveform', 'dark_mode',
+                        'rtl_mode', 'auto_scroll', 'auto_scroll_lines',
+                        'auto_scroll_pause_manual',
+                        'auto_scroll_type_only',
+                        'auto_scroll_pause_selecting'):
+                if key in ui_conf:
+                    setattr(self, key if key in (
+                        'show_timeline', 'show_remote', 'show_playrate',
+                        'show_volume', 'show_waveform', 'dark_mode', 'rtl_mode')
+                        else 'auto_scroll_enabled' if key == 'auto_scroll' else key,
+                        ui_conf[key])
+            self.current_theme = ui_conf.get('theme', self.current_theme)
+            self.playback_config = self.config.get(
+                'playback', self.playback_config)
+            self.engine.config = self.config
             
             # Apply immediate settings
             self.settings = self.config['settings']
@@ -3261,6 +3306,26 @@ class MainWindow(QMainWindow):
             self.btn_smart_typing.setChecked(
                 bool(smart_conf.get('enabled', False)) if isinstance(smart_conf, dict) else False)
             self.editor.update_font()
+            self.bottom_padding_percent = self.config['ui'].get(
+                'bottom_padding_percent', 25)
+            self.editor.set_auto_scroll(
+                self.auto_scroll_enabled, self.auto_scroll_lines,
+                self.auto_scroll_pause_manual,
+                self.auto_scroll_type_only, self.bottom_padding_percent,
+                self.auto_scroll_pause_selecting)
+            self.sync_autoscroll_ui()
+            ui_conf = self.config['ui']
+            for key in ('current_line_enabled', 'current_line_style',
+                        'current_line_scope', 'current_line_opacity',
+                        'current_line_color_mode',
+                        'current_line_color', 'current_line_focus_only',
+                        'current_line_hide_selection',
+                        'current_line_rail_shape', 'current_line_rail_width',
+                        'current_line_rail_color_mode',
+                        'current_line_rail_color'):
+                setattr(self, key, ui_conf.get(
+                    key, getattr(self, key)))
+            self._apply_current_line_settings()
             self.update_tc_helper()
             self.font_combo.blockSignals(True)
             self.size_combo.blockSignals(True)
@@ -3269,6 +3334,8 @@ class MainWindow(QMainWindow):
             self.font_combo.blockSignals(False)
             self.size_combo.blockSignals(False)
             self.apply_player_scaling()
+            self.apply_theme(self.current_theme)
+            self.apply_saved_playback_settings()
             
             # Pitch Lock
             self.engine.set_pitch_lock(self.config.get('playback', {}).get('pitch_lock', True))
@@ -3280,7 +3347,9 @@ class MainWindow(QMainWindow):
             self.init_ocr_shortcut()
             
             self.save_config()
-            self.statusBar().showMessage("Preferences updated and saved", 2000)
+            message = ("Settings imported and saved" if imported
+                       else "Preferences updated and saved")
+            self.statusBar().showMessage(message, 2000)
 
     def toggle_spell_check(self):
         # Sync the Ribbon button toggle only (Menu item is now a separate launcher)
@@ -3435,75 +3504,105 @@ class MainWindow(QMainWindow):
             
         self.save_config()
 
+    def _apply_current_line_settings(self):
+        if not hasattr(self, 'editor'):
+            return
+        bg_color = (self.current_line_color
+                    if self.current_line_color_mode == 'custom' else '')
+        rail_color = (self.current_line_rail_color
+                      if self.current_line_rail_color_mode == 'custom' else '')
+        self.editor.set_current_line_indicator(
+            self.current_line_enabled, self.current_line_style,
+            self.current_line_opacity, bg_color,
+            self.current_line_focus_only, self.current_line_hide_selection,
+            self.current_line_rail_shape, self.current_line_rail_width,
+            rail_color, self.current_line_scope)
+
+    def _apply_autoscroll_settings(self):
+        self.config['ui']['auto_scroll'] = self.auto_scroll_enabled
+        self.config['ui']['auto_scroll_lines'] = self.auto_scroll_lines
+        self.config['ui']['auto_scroll_pause_manual'] = self.auto_scroll_pause_manual
+        self.config['ui']['auto_scroll_type_only'] = self.auto_scroll_type_only
+        self.config['ui']['auto_scroll_pause_selecting'] = self.auto_scroll_pause_selecting
+        self.save_config()
+        self.sync_autoscroll_ui()
+        self.editor.set_auto_scroll(
+            self.auto_scroll_enabled, self.auto_scroll_lines,
+            self.auto_scroll_pause_manual,
+            self.auto_scroll_type_only, self.bottom_padding_percent,
+            self.auto_scroll_pause_selecting)
+
     def toggle_autoscroll(self, checked=None):
         if checked is None:
             self.auto_scroll_enabled = not self.auto_scroll_enabled
         else:
-            self.auto_scroll_enabled = checked
-        self.config['ui']['auto_scroll'] = self.auto_scroll_enabled
-        self.save_config()
-        self.sync_autoscroll_ui()
-        self.editor.set_auto_scroll(self.auto_scroll_enabled, self.auto_scroll_mode, self.scroll_past_end)
-        status_msg = "Auto Scroll: ON" if self.auto_scroll_enabled else "Auto Scroll: OFF"
-        self.statusBar().showMessage(status_msg, 2000)
+            self.auto_scroll_enabled = bool(checked)
+        self._apply_autoscroll_settings()
+        state = "ON" if self.auto_scroll_enabled else "OFF"
+        self.statusBar().showMessage(f"Auto Scroll: {state}", 2000)
 
-    def set_autoscroll_mode(self, mode):
-        self.auto_scroll_mode = mode
-        self.config['ui']['auto_scroll_mode'] = mode
-        self.auto_scroll_enabled = True
-        self.config['ui']['auto_scroll'] = True
-        self.save_config()
-        self.sync_autoscroll_ui()
-        self.editor.set_auto_scroll(self.auto_scroll_enabled, self.auto_scroll_mode, self.scroll_past_end)
-        mode_names = {
-            'smart_margin': 'Smart Margin (Keep 5-8 lines ahead)',
-            'typewriter': 'Typewriter Mode (Center cursor)',
-            'advance_bump': 'Advance Bump (Scroll near bottom)'
-        }
-        self.statusBar().showMessage(f"Auto Scroll: {mode_names.get(mode, mode)}", 2000)
+    def set_autoscroll_lines(self, value):
+        self.auto_scroll_lines = max(3, int(value))
+        self._apply_autoscroll_settings()
+        self.statusBar().showMessage(
+            f"Auto Scroll: {self.auto_scroll_lines} lines ahead", 2000)
 
-    def toggle_scroll_past_end(self, checked=None):
-        if checked is None:
-            self.scroll_past_end = not self.scroll_past_end
-        else:
-            self.scroll_past_end = checked
-        self.config['ui']['scroll_past_end'] = self.scroll_past_end
-        self.save_config()
-        self.sync_autoscroll_ui()
-        self.editor.set_auto_scroll(self.auto_scroll_enabled, self.auto_scroll_mode, self.scroll_past_end)
-        status_msg = "Scroll Past End: ON" if self.scroll_past_end else "Scroll Past End: OFF"
-        self.statusBar().showMessage(status_msg, 2000)
+    def _install_follow_diagnostics_shortcut(self):
+        """F12 toggles an overlay explaining the last auto-scroll decision.
+
+        Temporary diagnostic aid for tracking down why the caret stops
+        following in the built app, where offscreen reproduction cannot
+        reproduce the user's environment.
+        """
+        from PyQt6.QtGui import QShortcut
+        self._follow_diag_shortcut = QShortcut(QKeySequence("F12"), self)
+        self._follow_diag_shortcut.activated.connect(
+            self._toggle_follow_diagnostics)
+
+    def _toggle_follow_diagnostics(self):
+        self._follow_diag_visible = not getattr(
+            self, '_follow_diag_visible', False)
+        self.editor.toggle_follow_diagnostics(self._follow_diag_visible)
+        self.statusBar().showMessage(
+            f"Auto-scroll diagnostics: "
+            f"{'ON (F12 to hide)' if self._follow_diag_visible else 'OFF'}",
+            3000)
+
+    def set_autoscroll_pause_manual(self, checked):
+        self.auto_scroll_pause_manual = bool(checked)
+        self._apply_autoscroll_settings()
+
+    def set_autoscroll_type_only(self, checked):
+        self.auto_scroll_type_only = bool(checked)
+        self._apply_autoscroll_settings()
+
+    def refresh_autoscroll_menu(self):
+        if hasattr(self, 'autoscroll_lines_spin'):
+            maximum = self.editor.max_lines_ahead()
+            self.autoscroll_lines_spin.setRange(3, maximum)
+            self.autoscroll_lines_spin.setValue(
+                min(self.auto_scroll_lines, maximum))
 
     def sync_autoscroll_ui(self):
         if hasattr(self, 'btn_ribbon_autoscroll'):
             self.btn_ribbon_autoscroll.blockSignals(True)
             self.btn_ribbon_autoscroll.setChecked(self.auto_scroll_enabled)
             self.btn_ribbon_autoscroll.blockSignals(False)
-        if hasattr(self, 'act_view_autoscroll'):
-            self.act_view_autoscroll.blockSignals(True)
-            self.act_view_autoscroll.setChecked(self.auto_scroll_enabled)
-            self.act_view_autoscroll.blockSignals(False)
-        if hasattr(self, 'act_scroll_past_end'):
-            self.act_scroll_past_end.blockSignals(True)
-            self.act_scroll_past_end.setChecked(self.scroll_past_end)
-            self.act_scroll_past_end.blockSignals(False)
-        if hasattr(self, 'act_view_scroll_past_end'):
-            self.act_view_scroll_past_end.blockSignals(True)
-            self.act_view_scroll_past_end.setChecked(self.scroll_past_end)
-            self.act_view_scroll_past_end.blockSignals(False)
-        if hasattr(self, 'autoscroll_menu_actions'):
-            for m, act in self.autoscroll_menu_actions.items():
-                act.blockSignals(True)
-                act.setChecked(m == self.auto_scroll_mode)
-                act.blockSignals(False)
-        if hasattr(self, 'view_autoscroll_group'):
-            for act in self.view_autoscroll_group.actions():
-                is_cur = (self.auto_scroll_mode == 'smart_margin' and 'Smart Margin' in act.text()) or \
-                         (self.auto_scroll_mode == 'typewriter' and 'Typewriter' in act.text()) or \
-                         (self.auto_scroll_mode == 'advance_bump' and 'Advance Bump' in act.text())
-                act.blockSignals(True)
-                act.setChecked(is_cur)
-                act.blockSignals(False)
+        for attr, value in (
+                ('act_autoscroll_pause_manual', self.auto_scroll_pause_manual),
+                ('act_autoscroll_type_only', self.auto_scroll_type_only)):
+            action = getattr(self, attr, None)
+            if action is not None:
+                action.blockSignals(True)
+                action.setChecked(value)
+                action.blockSignals(False)
+        if hasattr(self, 'autoscroll_lines_spin'):
+            maximum = self.editor.max_lines_ahead()
+            spin = self.autoscroll_lines_spin
+            spin.blockSignals(True)
+            spin.setRange(3, maximum)
+            spin.setValue(min(self.auto_scroll_lines, maximum))
+            spin.blockSignals(False)
 
     def on_waveform_visibility_changed(self, visible):
         """Syncs the menu action when dock is closed via 'x'"""

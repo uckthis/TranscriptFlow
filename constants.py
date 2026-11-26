@@ -4,7 +4,7 @@ Centralized configuration for magic numbers and application defaults.
 """
 
 # Application Info
-APP_VERSION = "1.1.7"
+APP_VERSION = "1.1.8"
 
 # Timecode & Formatting
 DEFAULT_FPS = 23.976

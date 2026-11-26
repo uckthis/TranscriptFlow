@@ -1,10 +1,14 @@
-from PyQt6.QtWidgets import QTextEdit, QMenu, QApplication
-from PyQt6.QtCore import pyqtSignal, Qt, QRegularExpression, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QKeyEvent, QKeySequence, QTextCursor, QTextDocument, QFont, QColor, QTextCharFormat, QSyntaxHighlighter, QAction
+from PyQt6.QtWidgets import QTextEdit, QMenu, QApplication, QLabel
+from PyQt6.QtCore import (pyqtSignal, Qt, QRegularExpression, QPropertyAnimation,
+                          QEasingCurve, QRectF, QPointF, QTimer)
+from PyQt6.QtGui import (QKeyEvent, QKeySequence, QTextCursor, QTextDocument,
+                         QFont, QFontMetrics, QColor, QTextCharFormat,
+                         QSyntaxHighlighter, QAction, QPainter, QPen, QPolygonF)
 from utils import TimecodeHelper
 import smart_typing
 import re
 import os
+import time
 
 # Configure enchant to use AppData dicts folder BEFORE importing enchant
 from path_manager import get_dicts_dir
@@ -97,85 +101,515 @@ class TranscriptEditor(QTextEdit):
         self.highlighter.set_language(settings.get('spell_check_lang', 'en_US'))
         self.highlighter.set_enabled(settings.get('spell_check', True))
         
-        # Clear highlights when cursor moves
-        self.cursorPositionChanged.connect(lambda: self.setExtraSelections([]))
+        # Extra selections are rebuilt so spell/timecode highlights coexist
+        # with the current-line indicator.
+        self._transient_selections = []
+        self._cursor_line_selection = None
+        self.cursorPositionChanged.connect(self._refresh_extra_selections)
         
         # Redundant Modification Safeguard:
         # 1. Standard text change tracking
         self.document().contentsChanged.connect(lambda: self.document().setModified(True))
 
-        # Auto-scroll and overscroll padding
+        # Auto-scroll: one follow mode with configurable lines ahead
         self.auto_scroll_enabled = True
-        self.auto_scroll_mode = 'smart_margin'  # 'smart_margin', 'typewriter', 'advance_bump'
-        self.scroll_past_end = True
-        self.cursorPositionChanged.connect(self._handle_auto_scroll)
+        self.auto_scroll_lines = 6
+        self.auto_scroll_pause_manual = False
+        self.auto_scroll_type_only = False
+        self.auto_scroll_pause_selecting = True
+        self._mouse_selection_down = False
+        self._modifier_selection_held = False
+        self._selection_pause_until = 0.0
+        self._selection_resume_delay = 0.35
+        # Watchdog timestamps: a mouse release or key release can be swallowed
+        # by a focus change. Without a self-expiry path, one missed release
+        # leaves the guard latched on forever and auto scroll never resumes.
+        self._mouse_down_at = 0.0
+        self._mouse_last_activity_at = 0.0
+        self._mouse_press_pos = None
+        self._mouse_dragging = False
+        self._modifier_held_at = 0.0
+        # Diagnostics for the auto-scroll follow decision, surfaced by the
+        # F12 debug readout in main.py.
+        self._last_follow_probe = None
+        self._last_follow_skip = ''
+        # Scroll offset at the moment a follow started. If a relayout collapses
+        # the scrollbar range during an edit, Qt can clamp the value down which
+        # reads as the view jumping to the top of the page; this lets the editor
+        # put it back. Disarmed by any deliberate user scroll or click.
+        self._follow_floor = -1
+        self._follow_guard_active = False
+        self._mouse_watchdog_seconds = 1.5
+        self._modifier_watchdog_seconds = 2.0
+        self.bottom_padding_percent = 25
+        self._last_manual_scroll_at = 0.0
+        self._last_manual_nav_at = 0.0
+        self._manual_pause_seconds = 3.0
+        # cursorPositionChanged fires from inside super().keyPressEvent(),
+        # before the new block's layout has settled. Following there starts an
+        # animation from stale geometry which the authoritative post-keypress
+        # call then retargets - visible as a jump to the top and back on Enter.
+        self._in_key_press = False
+        self.cursorPositionChanged.connect(self._on_cursor_position_changed)
+        self.verticalScrollBar().valueChanged.connect(
+            self._on_scroll_value_changed)
 
-        # Smooth 1-line mouse wheel scrolling
+        # Wheel scroll animation
         self._scroll_target = None
         self._scroll_anim = QPropertyAnimation(self.verticalScrollBar(), b"value")
         self._scroll_anim.setDuration(100)
         self._scroll_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-    def set_auto_scroll(self, enabled=True, mode='smart_margin', scroll_past_end=True):
-        self.auto_scroll_enabled = enabled
-        self.auto_scroll_mode = mode
-        self.scroll_past_end = scroll_past_end
+        # Current-line indicator
+        self.current_line_enabled = True
+        self.current_line_style = 'background'
+        self.current_line_scope = 'line'
+        self.current_line_opacity = 12
+        self.current_line_color = ''
+        self.current_line_rail_color = ''
+        self.current_line_theme_color = '#378ADD'
+        self.current_line_focus_only = True
+        self.current_line_hide_selection = True
+        self.current_line_rail_shape = 'solid'
+        self.current_line_rail_width = 3
+
+    def set_auto_scroll(self, enabled=True, lines=6,
+                        pause_manual=False, type_only=False,
+                        bottom_padding=25, pause_selecting=True):
+        self.auto_scroll_enabled = bool(enabled)
+        self.auto_scroll_lines = max(3, int(lines))
+        self.auto_scroll_pause_manual = bool(pause_manual)
+        self.auto_scroll_type_only = bool(type_only)
+        self.auto_scroll_pause_selecting = bool(pause_selecting)
+        self._mouse_selection_down = False
+        self._modifier_selection_held = False
+        self._selection_pause_until = 0.0
+        self._mouse_down_at = 0.0
+        self._mouse_last_activity_at = 0.0
+        self._mouse_press_pos = None
+        self._mouse_dragging = False
+        self._modifier_held_at = 0.0
+        self.bottom_padding_percent = max(0, min(40, int(bottom_padding)))
         self.update_bottom_margin()
         if self.auto_scroll_enabled:
             self._handle_auto_scroll()
+
+    def set_current_line_indicator(self, enabled=True, style='background',
+                                   opacity=12, color='', focus_only=True,
+                                   hide_selection=True, rail_shape='solid',
+                                   rail_width=3, rail_color='',
+                                   scope='line'):
+        self.current_line_enabled = bool(enabled)
+        self.current_line_style = style if style in (
+            'background', 'rail', 'both') else 'background'
+        self.current_line_scope = scope if scope in ('line', 'paragraph') else 'line'
+        self.current_line_opacity = max(5, min(25, int(opacity)))
+        self.current_line_color = color or ''
+        self.current_line_rail_color = rail_color or ''
+        self.current_line_focus_only = bool(focus_only)
+        self.current_line_hide_selection = bool(hide_selection)
+        self.current_line_rail_shape = rail_shape if rail_shape in (
+            'solid', 'rounded', 'tick', 'arrow') else 'solid'
+        self.current_line_rail_width = max(2, min(8, int(rail_width)))
+        self.update_bottom_margin()
+        self._refresh_extra_selections()
+
+    def set_current_line_theme_color(self, color):
+        self.current_line_theme_color = color or '#378ADD'
+        self._refresh_extra_selections()
+
+    def _current_line_color(self):
+        color = QColor(self.current_line_color) if self.current_line_color \
+            else QColor()
+        if not color.isValid():
+            color = QColor(self.current_line_theme_color)
+        if not color.isValid():
+            color = QColor('#378ADD')
+        return color
+
+    def _rail_color(self):
+        color = QColor(self.current_line_rail_color) \
+            if self.current_line_rail_color else QColor()
+        if not color.isValid():
+            color = self._current_line_color()
+        return color
+
+    def _should_show_current_line(self):
+        if not self.current_line_enabled:
+            return False
+        if self.current_line_style not in ('background', 'rail', 'both'):
+            return False
+        if self.current_line_focus_only and not self.hasFocus():
+            return False
+        if (self.current_line_hide_selection and
+                self.textCursor().hasSelection() and
+                not self._transient_selections):
+            return False
+        return True
+
+    def _refresh_extra_selections(self):
+        selection = None
+        if (self._should_show_current_line() and
+                self.current_line_style in ('background', 'both')):
+            cursor = QTextCursor(self.textCursor())
+            cursor.clearSelection()
+            if self.current_line_scope == 'paragraph':
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                                    QTextCursor.MoveMode.KeepAnchor)
+            else:
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfLine,
+                                    QTextCursor.MoveMode.KeepAnchor)
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = cursor
+            fmt = QTextCharFormat()
+            color = self._current_line_color()
+            color.setAlpha(self.current_line_opacity * 255 // 100)
+            fmt.setBackground(color)
+            selection.format = fmt
+        self._cursor_line_selection = selection
+        selections = ([selection] if selection else []) + \
+            list(self._transient_selections)
+        self.setExtraSelections(selections)
+        self.viewport().update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if (not self._should_show_current_line() or
+                self.current_line_style not in ('rail', 'both')):
+            return
+        rect = self.cursorRect()
+        if rect.isNull():
+            return
+        color = self._rail_color()
+        color.setAlpha(255)
+        width = self.current_line_rail_width
+        height = max(rect.height(), self.fontMetrics().lineSpacing())
+        y = rect.top()
+        x = 3
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        shape = self.current_line_rail_shape
+        if shape == 'solid':
+            painter.fillRect(QRectF(x, y, width, height), color)
+        elif shape == 'rounded':
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(QRectF(x, y + 1, width, height - 2),
+                                    width / 2.0, width / 2.0)
+        elif shape == 'tick':
+            painter.setPen(QPen(color, 2))
+            mid = int(y + height / 2)
+            painter.drawLine(int(x), mid, int(x + width + 6), mid)
+        elif shape == 'arrow':
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            mid = y + height / 2.0
+            arrow_height = min(height - 4, max(10, height * 0.55))
+            tip = x + width + 6
+            painter.drawPolygon(QPolygonF([
+                QPointF(x, mid - arrow_height / 2),
+                QPointF(tip, mid),
+                QPointF(x, mid + arrow_height / 2),
+            ]))
+        painter.end()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self._refresh_extra_selections()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self._mouse_selection_down = False
+        self._modifier_selection_held = False
+        self._mouse_down_at = 0.0
+        self._mouse_last_activity_at = 0.0
+        self._modifier_held_at = 0.0
+        self._refresh_extra_selections()
+
+    def _effective_line_height(self):
+        """Line height at the cursor, accounting for the current font/RTL size."""
+        return max(1, QFontMetrics(self.currentFont()).lineSpacing())
+
+    def max_lines_ahead(self):
+        """Largest useful lines-ahead value: 85% of the visible lines."""
+        viewport_h = self.viewport().height()
+        if viewport_h <= 0:
+            return 12
+        visible = viewport_h / self._effective_line_height()
+        return max(3, int(visible * 0.85))
+
+    def _rail_gutter_width(self):
+        if self.current_line_enabled and self.current_line_style in (
+                'rail', 'both'):
+            return max(18, self.current_line_rail_width + 10)
+        return 4
 
     def update_bottom_margin(self):
         root = self.document().rootFrame()
         if not root:
             return
         fmt = root.frameFormat()
-        if self.scroll_past_end:
-            viewport_h = self.viewport().height()
-            margin = max(150, int(viewport_h * 0.5)) if viewport_h > 0 else 200
-            fmt.setBottomMargin(float(margin))
-        else:
-            fmt.setBottomMargin(0.0)
+        viewport_h = self.viewport().height()
+        bottom = int(viewport_h * self.bottom_padding_percent / 100.0) \
+            if viewport_h > 0 else 0
+        was_modified = self.document().isModified()
+        fmt.setBottomMargin(float(bottom))
+        fmt.setLeftMargin(float(self._rail_gutter_width()))
         root.setFrameFormat(fmt)
+        self.document().setModified(was_modified)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update_bottom_margin()
 
-    def _handle_auto_scroll(self):
+    def _selection_guard_active(self):
+        """True only while a selection is actively being made.
+
+        Deliberately trusts editor-local event state only. Two earlier versions
+        of this guard queried QApplication.mouseButtons()/keyboardModifiers()
+        and both made auto-scroll die outright, because a global query can
+        report a held button or modifier at times the widget never saw a
+        matching release. A selection that merely *exists* must not block
+        either: commands such as 'Go To Next Time Code' select the timecode on
+        purpose, and gating on hasSelection() froze auto-scroll for the whole
+        document.
+        """
+        if not self.auto_scroll_pause_selecting:
+            return False
+        now = time.monotonic()
+
+        # Self-healing watchdogs. An event-driven flag alone is not enough in
+        # the real app: a release can be swallowed by a focus change (clicking
+        # a timecode seeks the media and can steal focus), leaving the flag on
+        # forever. A genuine drag keeps renewing its activity timestamp.
+        if self._mouse_selection_down:
+            # After a short grace period, a globally released button proves
+            # the click/drag is over even if this widget missed the release
+            # event. During a real drag the button stays down, so the guard
+            # remains active exactly when it should.
+            if (now - self._mouse_down_at > 0.08 and
+                    QApplication.mouseButtons() == Qt.MouseButton.NoButton):
+                self._mouse_selection_down = False
+            elif (now - self._mouse_last_activity_at >
+                  self._mouse_watchdog_seconds):
+                self._mouse_selection_down = False
+        if self._modifier_selection_held:
+            if now - self._modifier_held_at > self._modifier_watchdog_seconds:
+                self._modifier_selection_held = False
+
+        if self._modifier_selection_held:
+            return True
+        if self._mouse_selection_down:
+            return True
+        return now < self._selection_pause_until
+
+    def follow_diagnostics(self):
+        """One-line human-readable report on the last follow decision."""
+        probe = self._last_follow_probe or {}
+        if self._last_follow_skip:
+            reason = self._last_follow_skip
+        elif probe.get('needs'):
+            reason = 'scrolled'
+        elif probe:
+            reason = 'cursor_in_zone'
+        else:
+            reason = 'not_run'
+        if not probe:
+            return f"follow: {reason}"
+        return (f"follow: {reason} | caret_bottom={probe['cursor_bottom']} "
+                f"threshold={probe['threshold']} viewport={probe['viewport_h']} "
+                f"line_h={probe['line_height']} ahead={probe['lines_ahead']} "
+                f"scroll={probe['scroll']} | flags "
+                f"mouse={'1' if self._mouse_selection_down else '0'} "
+                f"mod={'1' if self._modifier_selection_held else '0'} "
+                f"drag={'1' if self._mouse_dragging else '0'} "
+                f"pause={max(0.0, self._selection_pause_until - time.monotonic()):.2f}s")
+
+    def toggle_follow_diagnostics(self, enabled):
+        """Show the live follow readout as an overlay (temporary debug aid)."""
+        if not hasattr(self, '_diag_label'):
+            self._diag_label = QLabel(self.viewport())
+            self._diag_label.setStyleSheet(
+                "background: rgba(0,0,0,190); color: #7CFF7C;"
+                " padding: 4px 6px; font-family: Consolas, monospace;"
+                " font-size: 11px; border-radius: 3px;")
+            self._diag_label.setWordWrap(True)
+            self._diag_label.setMouseTracking(True)
+            self._diag_label.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        if enabled:
+            self._diag_label.setGeometry(8, 8, self.viewport().width() - 24, 54)
+            self._diag_label.show()
+            self._diag_label.raise_()
+            self._diag_timer = getattr(self, '_diag_timer', None)
+            if self._diag_timer is None:
+                from PyQt6.QtCore import QTimer
+                self._diag_timer = QTimer(self)
+                self._diag_timer.timeout.connect(self._refresh_diag_label)
+            self._diag_timer.start(200)
+            self._refresh_diag_label()
+        else:
+            if getattr(self, '_diag_timer', None) is not None:
+                self._diag_timer.stop()
+            self._diag_label.hide()
+
+    def _refresh_diag_label(self):
+        if not hasattr(self, '_diag_label'):
+            return
+        self._diag_label.setGeometry(
+            8, 8, self.viewport().width() - 24, 54)
+        self._diag_label.setText(self.follow_diagnostics())
+
+    def _pause_auto_scroll_for_selection(self):
+        """Hold the follow while a selection gesture is in progress.
+
+        The resume delay is armed only for real gestures (mouse drag or a held
+        Shift/Ctrl). A plain click just records the gesture so the follow does
+        not fight the pointer, without delaying the next follow.
+        """
+        if self._mouse_selection_down or self._modifier_selection_held:
+            self._selection_pause_until = (
+                time.monotonic() + self._selection_resume_delay)
+
+    def _manual_pause_active(self):
+        if not self.auto_scroll_pause_manual:
+            return False
+        now = time.monotonic()
+        return (now - self._last_manual_scroll_at < self._manual_pause_seconds or
+                now - self._last_manual_nav_at < self._manual_pause_seconds)
+
+    def _on_cursor_position_changed(self):
+        """Follow cursor movement from external sources, but never mid-keypress.
+
+        During keyPressEvent the document layout is not yet final when Qt emits
+        this signal. keyPressEvent calls _handle_auto_scroll itself once the
+        edit is complete, so following here as well produced a two-animation
+        fight and the whole-page jump on Enter.
+        """
+        if self._in_key_press:
+            return
+        self._handle_auto_scroll()
+
+    def _on_scroll_value_changed(self, value):
+        """Put the view back if a relayout clamped it toward the top.
+
+        Adding a paragraph can transiently shrink the document's layout, which
+        makes Qt clamp the scrollbar value down. On a long file the clamp can be
+        enormous, and it looked exactly like the page jumping to the top when
+        Enter was pressed. If the value dropped far below where the follow
+        asked to be, while the range is still settling, restore it.
+        """
+        if not self._follow_guard_active or self._follow_floor < 0:
+            return
+        # Only correct a large backward clamp, not normal small adjustments.
+        if value >= self._follow_floor - max(4, self._effective_line_height() * 2):
+            return
+        self.verticalScrollBar().setValue(self._follow_floor)
+
+    def _arm_follow_guard(self):
+        """Track a follow so a range collapse during relayout can be undone.
+
+        The floor is deliberately the offset shown *before* the follow, not the
+        requested target: it must never drag the view forward, only refuse to
+        be clamped backwards. Recording the target instead would also undo a
+        legitimate scroll made inside the guard window.
+        """
+        self._follow_floor = self.verticalScrollBar().value()
+        self._follow_guard_active = True
+
+        def disarm():
+            self._follow_guard_active = False
+
+        QTimer.singleShot(600, disarm)
+
+    def _follow_scroll_to(self, target):
+        """Move the view so the caret clears the bottom threshold.
+
+        Applied immediately, with no easing. An earlier build animated this,
+        but a follow advances one line per keystroke (~22 px): far too little
+        for any easing curve to be perceptible, so it only added lag. Worse, a
+        QPropertyAnimation that is still running while the document reflows
+        can be yanked backwards, which is what made Enter flash the view.
+        """
+        vbar = self.verticalScrollBar()
+        target = max(vbar.minimum(), min(vbar.maximum(), int(target)))
+        if target == vbar.value():
+            return
+        # A wheel animation still coasting owns the bar; its internal value can
+        # drag things backwards when cancelled mid flight.
+        if self._scroll_anim.state() == QPropertyAnimation.State.Running:
+            self._scroll_anim.stop()
+            self._scroll_target = None
+        vbar.setValue(target)
+
+    def _handle_auto_scroll(self, from_typing=False, content_changed=False):
+        """Follow the caret, keeping `lines ahead` of text below it.
+
+        content_changed=True marks a genuine insertion (typing, paste,
+        snippet). That cancels a stranded Ctrl/Shift latch - pressing Ctrl+V is
+        not a selection gesture, but it does latch Ctrl - while a live mouse
+        drag still wins, so dragging never gets yanked by the follow.
+        """
+        self._last_follow_skip = ''
         if not self.auto_scroll_enabled:
+            self._last_follow_skip = 'disabled'
+            return
+        if self._manual_pause_active():
+            self._last_follow_skip = 'manual_pause'
+            return
+        if self.auto_scroll_type_only and not from_typing:
+            self._last_follow_skip = 'type_only'
+            return
+        if content_changed and not self._mouse_selection_down:
+            # The text moved; a modifier left over from the chord is not a
+            # selection in progress. Clear it so the follow can resume.
+            self._modifier_selection_held = False
+            self._selection_pause_until = 0.0
+        if self._selection_guard_active():
+            if self._modifier_selection_held:
+                self._last_follow_skip = 'guard:modifier'
+            elif self._mouse_selection_down:
+                self._last_follow_skip = 'guard:mouse'
+            else:
+                self._last_follow_skip = 'guard:pause_window'
             return
 
         viewport_h = self.viewport().height()
         if viewport_h <= 0:
+            self._last_follow_skip = 'no_viewport'
             return
 
+        line_height = self._effective_line_height()
+        lines_ahead = min(self.auto_scroll_lines, self.max_lines_ahead())
+        bottom_margin = min(lines_ahead * line_height,
+                            int(viewport_h * 0.85))
         cursor_rect = self.cursorRect()
-        line_height = self.fontMetrics().lineSpacing()
-        vbar = self.verticalScrollBar()
 
-        if self.auto_scroll_mode == 'smart_margin':
-            # Guarantee 5-8 lines of upcoming text below cursor
-            bottom_margin = max(5 * line_height, int(viewport_h * 0.25))
-            top_margin = max(3 * line_height, int(viewport_h * 0.15))
+        self._last_follow_probe = {
+            'cursor_bottom': cursor_rect.bottom(),
+            'threshold': viewport_h - bottom_margin,
+            'viewport_h': viewport_h,
+            'needs': cursor_rect.bottom() > viewport_h - bottom_margin,
+            'scroll': self.verticalScrollBar().value(),
+            'line_height': line_height,
+            'lines_ahead': lines_ahead,
+        }
 
-            if cursor_rect.bottom() > viewport_h - bottom_margin:
-                delta = cursor_rect.bottom() - (viewport_h - bottom_margin)
-                vbar.setValue(vbar.value() + delta)
-            elif cursor_rect.top() < top_margin:
-                delta = top_margin - cursor_rect.top()
-                vbar.setValue(vbar.value() - delta)
-
-        elif self.auto_scroll_mode == 'typewriter':
-            target_y = viewport_h // 2
-            diff = cursor_rect.center().y() - target_y
-            if abs(diff) > line_height // 2:
-                vbar.setValue(vbar.value() + diff)
-
-        elif self.auto_scroll_mode == 'advance_bump':
-            bottom_threshold = int(viewport_h * 0.75)
-            if cursor_rect.bottom() > bottom_threshold:
-                bump = max(4 * line_height, int(viewport_h * 0.25))
-                vbar.setValue(vbar.value() + bump)
+        if cursor_rect.bottom() > viewport_h - bottom_margin:
+            delta = cursor_rect.bottom() - (viewport_h - bottom_margin)
+            # Move a full line clear of the boundary so the caret does not sit
+            # exactly on the threshold (where each keypress nudges the bar by
+            # 2-6 px and looks stuck).
+            delta = max(delta, line_height)
+            current = self.verticalScrollBar().value()
+            target = current + delta
+            self._last_follow_probe['target'] = target
+            # Arm the anti-clamp guard around the edit that is about to reflow
+            # the document, so a range collapse cannot dump us at the top.
+            self._arm_follow_guard()
+            self._follow_scroll_to(target)
 
     def wheelEvent(self, event):
         # Allow standard zoom when Ctrl is held
@@ -185,6 +619,9 @@ class TranscriptEditor(QTextEdit):
 
         delta_y = event.angleDelta().y()
         if delta_y != 0:
+            self._last_manual_scroll_at = time.monotonic()
+            # Deliberate scrolling wins over the anti-clamp restore.
+            self._follow_guard_active = False
             # 120 units per standard wheel notch -> exactly 1 line per notch!
             steps = delta_y / 120.0
             line_height = self.fontMetrics().lineSpacing()
@@ -204,6 +641,14 @@ class TranscriptEditor(QTextEdit):
         else:
             super().wheelEvent(event)
 
+    def keyReleaseEvent(self, event):
+        if event.key() in (Qt.Key.Key_Shift, Qt.Key.Key_Control):
+            # Arm the delay while the flag is still set, then release it.
+            self._pause_auto_scroll_for_selection()
+            self._modifier_selection_held = False
+            self._modifier_held_at = 0.0
+        super().keyReleaseEvent(event)
+
     def paste_plain_text(self):
         clipboard = QApplication.clipboard()
         text = clipboard.text()
@@ -214,7 +659,8 @@ class TranscriptEditor(QTextEdit):
             cursor.endEditBlock()
             self.ensureCursorVisible()
             if self.auto_scroll_enabled:
-                self._handle_auto_scroll()
+                self._handle_auto_scroll(from_typing=True,
+                                         content_changed=True)
 
     def update_font(self):
         font_name = self.settings.get('font', 'Tahoma')
@@ -232,8 +678,35 @@ class TranscriptEditor(QTextEdit):
             self.setCurrentCharFormat(self.get_default_format())
 
     def keyPressEvent(self, event: QKeyEvent):
+        # Suppress the cursorPositionChanged follow for the whole keypress:
+        # Qt emits it before the new block is laid out, so following there
+        # scrolls against stale geometry and then gets retargeted.
+        self._in_key_press = True
+        try:
+            self._key_press_event(event)
+        finally:
+            self._in_key_press = False
+
+    def _key_press_event(self, event: QKeyEvent):
         key = event.key()
         modifiers = event.modifiers()
+
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left,
+                   Qt.Key.Key_Right, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
+                   Qt.Key.Key_Home, Qt.Key.Key_End):
+            self._last_manual_nav_at = time.monotonic()
+        _sel_mods = (Qt.KeyboardModifier.ShiftModifier |
+                     Qt.KeyboardModifier.ControlModifier)
+        if modifiers & _sel_mods:
+            # Only latch while a modifier is actually held. Cleared as soon as
+            # any later key arrives without it, so a dropped keyRelease (focus
+            # change, OS quirk) can never strand the flag on and kill auto-scroll.
+            self._modifier_selection_held = True
+            self._modifier_held_at = time.monotonic()
+            self._pause_auto_scroll_for_selection()
+        elif self._modifier_selection_held:
+            self._modifier_selection_held = False
+            self._modifier_held_at = 0.0
         
         # 1. Handle TAB specifically (Standard TranscriptFlow behavior)
         if key == Qt.Key.Key_Tab and not modifiers:
@@ -267,6 +740,7 @@ class TranscriptEditor(QTextEdit):
             self._smart_typing_after_key(event, is_newline=True)
             if edit_cursor:
                 edit_cursor.endEditBlock()
+            self._handle_auto_scroll(from_typing=True, content_changed=True)
             return
 
         # 3. Build Shortcut String (e.g. "Ctrl+Shift+P")
@@ -308,6 +782,8 @@ class TranscriptEditor(QTextEdit):
         self._smart_typing_after_key(event)
         if edit_cursor:
             edit_cursor.endEditBlock()
+        self._handle_auto_scroll(from_typing=bool(event.text()),
+                                 content_changed=bool(event.text()))
 
         # 7. Force block alignment for RTL to prevent BiDi cursor jumping
         # Qt's BiDi algorithm tries to be "smart" and moves RTL text to the left
@@ -473,6 +949,18 @@ class TranscriptEditor(QTextEdit):
 
     def mousePressEvent(self, event):
         """Click to seek logic"""
+        self._last_manual_nav_at = time.monotonic()
+        # A click is deliberate; never undo the user's chosen position.
+        self._follow_guard_active = False
+        self._mouse_selection_down = True
+        self._mouse_down_at = time.monotonic()
+        self._mouse_last_activity_at = self._mouse_down_at
+        self._mouse_press_pos = event.pos()
+        self._mouse_dragging = False
+        # Deliberately DO NOT arm the pause here. A click that just places the
+        # caret is not a selection gesture; arming on press was what made the
+        # caret stop following after every mouse placement. The pause is armed
+        # on the first real drag movement instead.
         cursor = self.cursorForPosition(event.pos())
         cursor.select(cursor.SelectionType.WordUnderCursor)
         text = cursor.selectedText()
@@ -550,9 +1038,21 @@ class TranscriptEditor(QTextEdit):
             
         self.ensureCursorVisible()
         self.document().setModified(True)
+        # Snippets and timecode stamps insert text without a key event, so the
+        # follow has to be driven here or the caret can walk off screen.
+        self._handle_auto_scroll(from_typing=True, content_changed=True)
 
     def mouseReleaseEvent(self, event):
         """Detect click on timecode and seek"""
+        # Only a real drag earns a resume delay. A plain caret-placing click
+        # leaves auto scroll free to keep following immediately.
+        if self._mouse_dragging:
+            self._mouse_selection_down = True
+            self._pause_auto_scroll_for_selection()
+        self._mouse_selection_down = False
+        self._mouse_dragging = False
+        self._mouse_press_pos = None
+        self._mouse_last_activity_at = time.monotonic()
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.pos()
             cursor = self.cursorForPosition(pos)
@@ -591,7 +1091,8 @@ class TranscriptEditor(QTextEdit):
                         
                         # Determine highlight color (Subtle theme-aware or light blue)
                         sel.format.setBackground(QColor(173, 216, 230, 100)) # Lightblue semi-transparent
-                        self.setExtraSelections([sel])
+                        self._transient_selections = [sel]
+                        self._refresh_extra_selections()
                         
                         # 2. REAL CURSOR PLACEMENT
                         # Move real cursor to the end of timecode (without selection)
@@ -609,6 +1110,23 @@ class TranscriptEditor(QTextEdit):
 
     def mouseMoveEvent(self, event):
         """Change cursor when hovering over a timecode"""
+        if event.buttons() and self._mouse_selection_down:
+            # First real movement with the button held turns a click into a
+            # drag; that is the moment selection (and its pause) begins.
+            if (not self._mouse_dragging and self._mouse_press_pos is not None
+                    and (event.pos() - self._mouse_press_pos).manhattanLength()
+                    > 4):
+                self._mouse_dragging = True
+                self._pause_auto_scroll_for_selection()
+            self._mouse_last_activity_at = time.monotonic()
+        elif not event.buttons() and self._mouse_selection_down:
+            # Button released outside the widget.
+            if self._mouse_dragging:
+                self._pause_auto_scroll_for_selection()
+            self._mouse_selection_down = False
+            self._mouse_dragging = False
+            self._mouse_press_pos = None
+            self._mouse_last_activity_at = time.monotonic()
         pos = event.pos()
         cursor = self.cursorForPosition(pos)
         
@@ -836,6 +1354,12 @@ class TranscriptEditor(QTextEdit):
         cursor.endEditBlock()
 
     def contextMenuEvent(self, event):
+        if self._mouse_dragging:
+            self._pause_auto_scroll_for_selection()
+        self._mouse_selection_down = False
+        self._mouse_dragging = False
+        self._mouse_press_pos = None
+        self._mouse_last_activity_at = time.monotonic()
         menu = self.createStandardContextMenu()
         
         # Insert "Paste as Plain Text" right after standard "Paste"
@@ -955,7 +1479,8 @@ class TranscriptEditor(QTextEdit):
         # Use a vibrant but transparent yellow/gold highlight
         sel.format.setBackground(QColor(255, 215, 0, 100)) 
         sel.format.setProperty(QTextCharFormat.Property.OutlinePen, QColor("orange"))
-        self.setExtraSelections([sel])
+        self._transient_selections = [sel]
+        self._refresh_extra_selections()
         
         self.ensureCursorVisible()
 
